@@ -42,18 +42,58 @@ for the version of the code present in this tree.
 
 ## Installing the released binary
 
-Prebuilt binaries (including macOS) are automatically built and published to the [Releases](https://github.com/yuzhi535/grok-cli/releases) page of this repository.
+每次 push 到 `main` 会自动构建，并更新 [Releases](https://github.com/yuzhi535/grok-cli/releases) 里的 **`latest`** 滚动发布。当前提供：
 
-You can download the latest build from the `latest` release, or a specific versioned release.
+| 平台 | 产物 |
+|------|------|
+| macOS Apple Silicon | `gork-macos-arm64.tar.gz` |
+| Linux x86_64 | `gork-linux-x86_64.tar.gz` |
 
-For the original official builds, see:
-- Official install script: https://x.ai/cli/install.sh
-- Changelog: https://x.ai/build/changelog
+### macOS (Apple Silicon)
 
 ```sh
-# Example: download from this repo's Releases
-# Then extract and run the `gork` binary
+curl -fsSL -o gork.tar.gz \
+  https://github.com/yuzhi535/grok-cli/releases/download/latest/gork-macos-arm64.tar.gz
+tar -xzf gork.tar.gz
+chmod +x gork
+sudo mv gork /usr/local/bin/gork   # 或放到任意在 PATH 里的目录
+gork --version
 ```
+
+若 macOS 提示「无法验证开发者」：
+
+```sh
+xattr -dr com.apple.quarantine "$(command -v gork)"
+```
+
+### Linux (x86_64)
+
+```sh
+curl -fsSL -o gork.tar.gz \
+  https://github.com/yuzhi535/grok-cli/releases/download/latest/gork-linux-x86_64.tar.gz
+tar -xzf gork.tar.gz
+chmod +x gork
+sudo mv gork /usr/local/bin/gork
+gork --version
+```
+
+### 指定版本
+
+打了 `v*` tag 后会额外生成正式 release。把上面 URL 里的 `latest` 换成 tag 即可，例如：
+
+```sh
+# 示例
+https://github.com/yuzhi535/grok-cli/releases/download/v0.1.0/gork-macos-arm64.tar.gz
+```
+
+也可以在 Releases 页面手动下载：https://github.com/yuzhi535/grok-cli/releases
+
+### 官方原版
+
+如需 SpaceXAI 官方构建（二进制名为 `grok`）：
+
+- 安装脚本：https://x.ai/cli/install.sh
+- Changelog：https://x.ai/build/changelog
 
 ## Building from source
 
@@ -82,7 +122,10 @@ cargo build -p xai-grok-pager-bin --release  # release binary: target/release/go
 cargo check -p xai-grok-pager-bin            # fast validation
 ```
 
-The binary artifact is named `gork`. On first launch it opens your browser to authenticate — see the
+The binary artifact is named `gork`. It opens directly to the main TUI; sign in
+only when needed with `/login`, `gork login`, or `--force-login`. Its user-level
+state and configuration default to `~/.gork`; set `GORK_HOME` to use a different
+location (`GROK_HOME` remains accepted for compatibility). See the
 [authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
 
 ## Documentation
