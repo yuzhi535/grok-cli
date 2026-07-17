@@ -7,8 +7,11 @@
     <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
   </picture>
   <br>
-  Grok Build (<code>grok</code>)
+  Grok Build (<code>gork</code>)
 </h1>
+
+> **注意**：这是由 [yuzhi535](https://github.com/yuzhi535) 重新构建和维护的版本（rebuilt fork）。  
+> 基于原 SpaceXAI Grok Build 项目，增加了 GitHub Actions 自动构建流程（每次 commit 自动构建，并发布到 Releases，支持 Mac）。
 
 **Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
 full-screen TUI that understands your codebase, edits files, executes shell
@@ -26,10 +29,9 @@ Protocol (ACP).
 
 ![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
 
-**Learn more about Grok Build at [x.ai/cli](https://x.ai/cli)**
+**Learn more about the original Grok Build at [x.ai/cli](https://x.ai/cli)**
 
-This repository contains the Rust source for the `grok` CLI/TUI and its agent
-runtime. It is synced periodically from the SpaceXAI monorepo.
+> This is a personal rebuilt fork. See the note at the top of this README.
 
 A small `SOURCE_REV` file at the root records the full monorepo commit SHA
 for the version of the code present in this tree.
@@ -40,16 +42,18 @@ for the version of the code present in this tree.
 
 ## Installing the released binary
 
-Prebuilt binaries are published for macOS, Linux, and Windows:
+Prebuilt binaries (including macOS) are automatically built and published to the [Releases](https://github.com/yuzhi535/grok-cli/releases) page of this repository.
+
+You can download the latest build from the `latest` release, or a specific versioned release.
+
+For the original official builds, see:
+- Official install script: https://x.ai/cli/install.sh
+- Changelog: https://x.ai/build/changelog
 
 ```sh
-curl -fsSL https://x.ai/cli/install.sh | bash   # macOS / Linux / Git Bash
-irm https://x.ai/cli/install.ps1 | iex          # Windows PowerShell
-grok --version
+# Example: download from this repo's Releases
+# Then extract and run the `gork` binary
 ```
-
-See the [changelog](https://x.ai/build/changelog) for the latest fixes,
-features, and improvements in each release.
 
 ## Building from source
 
@@ -73,13 +77,12 @@ Requirements:
   and not currently tested from this tree.
 
 ```sh
-cargo run -p xai-grok-pager-bin              # build + launch the TUI
-cargo build -p xai-grok-pager-bin --release  # release binary: target/release/xai-grok-pager
+cargo run -p xai-grok-pager-bin              # build + launch the TUI (`gork`)
+cargo build -p xai-grok-pager-bin --release  # release binary: target/release/gork
 cargo check -p xai-grok-pager-bin            # fast validation
 ```
 
-The binary artifact is named `xai-grok-pager`; official installs ship it as
-`grok`. On first launch it opens your browser to authenticate — see the
+The binary artifact is named `gork`. On first launch it opens your browser to authenticate — see the
 [authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
 
 ## Documentation
@@ -96,7 +99,7 @@ MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
 
 | Path | Contents |
 |------|----------|
-| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `xai-grok-pager` binary |
+| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `gork` binary |
 | `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
 | `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
 | `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
@@ -122,7 +125,9 @@ cargo fmt --all               # rustfmt.toml at the repo root
 ## Contributing
 
 > [!NOTE]
-> External contributions are not accepted. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+> This is a personal rebuilt fork of the original project.  
+> For the upstream project, see the original SpaceXAI repository.  
+> Issues and PRs related to the custom CI/release setup are welcome here.
 
 ## License
 
