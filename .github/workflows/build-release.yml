@@ -1,0 +1,163 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon (required)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            pretty_name: macos-arm64
+
+          # macOS Intel (for broader Mac support)
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+            pretty_name: macos-x86_64
+
+          # Linux (x86_64)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            pretty_name: linux-x86_64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Rust toolchain version
+        id: rust-toolchain
+        run: |
+          CHANNEL=$(grep '^channel' rust-toolchain.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1"
+
+      - name: Install protoc
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install protobuf
+            echo "PROTOC=$(brew --prefix)/bin/protoc" >> $GITHUB_ENV
+          else
+            # Linux
+            sudo apt-get update
+            sudo apt-get install -y protobuf-compiler
+          fi
+
+      - name: Build release binary
+        run: cargo build -p xai-grok-pager-bin --release
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist
+          cp target/release/xai-grok-pager dist/grok
+          chmod +x dist/grok
+          # Strip debug symbols for smaller size
+          strip dist/grok || true
+
+      - name: Verify binary
+        run: |
+          file dist/grok || true
+          ./dist/grok --version || true
+
+      - name: Create archive
+        run: |
+          cd dist
+          tar -czvf ../grok-${{ matrix.pretty_name }}.tar.gz grok
+          cd ..
+
+      - name: Upload build artifact (CI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: grok-${{ matrix.pretty_name }}
+          path: grok-${{ matrix.pretty_name }}.tar.gz
+          retention-days: 14
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            grok-${{ matrix.pretty_name }}.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-latest-release:
+    name: Update "latest" Release (main)
+    runs-on: ubuntu-latest
+    needs: build
+    # Only run on direct pushes to main (not PRs, not tags)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+    concurrency:
+      group: update-latest-release
+      cancel-in-progress: true
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: grok-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Update latest release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Updating 'latest' release with fresh builds from main..."
+
+          # Remove old latest release + tag if it exists
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+
+          # Build nice release notes
+          NOTES="自动构建于 $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+
+          Commit: ${{ github.sha }}
+          https://github.com/${{ github.repository }}/commit/${{ github.sha }}"
+
+          # Create a new 'latest' release (moving tag)
+          gh release create latest \
+            --title "Latest build (main)" \
+            --notes "$NOTES" \
+            --prerelease \
+            --target ${{ github.sha }}
+
+          # Upload all platform artifacts (Mac version guaranteed)
+          for file in artifacts/grok-*.tar.gz; do
+            if [ -f "$file" ]; then
+              echo "Uploading $file"
+              gh release upload latest "$file" --clobber
+            fi
+          done
+
+          echo "✅ Latest release updated successfully with Mac + other builds!"
