@@ -565,46 +565,22 @@ pub fn parse_session_recap_available(meta: Option<&acp::Meta>) -> bool {
         .unwrap_or(false)
 }
 
-/// Determine whether interactive login is needed based on the advertised auth methods.
+/// Determine whether interactive login is needed during startup.
 ///
-/// Matches TUI startup behavior: if the first method is `grok.com`, defer auth
-/// and show the login-aware welcome flow. Otherwise, authenticate eagerly.
+/// Gork always opens the main welcome screen first. Interactive authentication
+/// remains available through `/login` and `--force-login`, but is never
+/// automatically dispatched merely because `grok.com` is advertised.
 ///
 /// Returns `(needs_login, login_label, login_method_id, auth_start_mode)`.
 pub fn startup_auth_metadata(
-    auth_methods: &[acp::AuthMethod],
+    _auth_methods: &[acp::AuthMethod],
 ) -> (
     bool,
     Option<String>,
     Option<acp::AuthMethodId>,
     AuthStartMode,
 ) {
-    let first_method = auth_methods.first();
-    let needs_login = first_method
-        .map(|m| AuthMethodKind::from_id(m.id()).needs_interactive_login())
-        .unwrap_or(false);
-
-    if !needs_login {
-        return (false, None, None, AuthStartMode::Pending);
-    }
-
-    let method = first_method.unwrap(); // safe: needs_login == true implies first_method.is_some()
-    let login_label = Some(method.name().to_string());
-    let login_method_id = Some(method.id().clone());
-
-    let is_provider = method
-        .meta()
-        .as_ref()
-        .and_then(|v| v.get("external_provider"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let auth_start_mode = if is_provider {
-        AuthStartMode::Command
-    } else {
-        AuthStartMode::Pending
-    };
-
-    (needs_login, login_label, login_method_id, auth_start_mode)
+    (false, None, None, AuthStartMode::Pending)
 }
 
 /// Find an interactive login method from the auth methods list.
@@ -854,12 +830,12 @@ mod tests {
     }
 
     #[test]
-    fn startup_auth_grok_com_no_provider_needs_login_pending() {
+    fn startup_auth_grok_com_no_provider_skips_login_pending() {
         let methods = vec![make_auth_method("grok.com", "grok.com", None)];
         let (needs, label, method_id, mode) = startup_auth_metadata(&methods);
-        assert!(needs);
-        assert_eq!(label.as_deref(), Some("grok.com"));
-        assert_eq!(method_id.as_ref().unwrap().0.as_ref(), "grok.com");
+        assert!(!needs);
+        assert!(label.is_none());
+        assert!(method_id.is_none());
         assert_eq!(mode, AuthStartMode::Pending);
     }
 
@@ -868,10 +844,10 @@ mod tests {
         let meta = serde_json::json!({ "external_provider": true });
         let methods = vec![make_auth_method("grok.com", "Acme Corp", Some(meta))];
         let (needs, label, method_id, mode) = startup_auth_metadata(&methods);
-        assert!(needs);
-        assert_eq!(label.as_deref(), Some("Acme Corp"));
-        assert_eq!(method_id.as_ref().unwrap().0.as_ref(), "grok.com");
-        assert_eq!(mode, AuthStartMode::Command);
+        assert!(!needs);
+        assert!(label.is_none());
+        assert!(method_id.is_none());
+        assert_eq!(mode, AuthStartMode::Pending);
     }
 
     #[test]
@@ -935,17 +911,10 @@ mod tests {
         assert_eq!(mode, AuthStartMode::Pending);
     }
 
-    /// Inverse direction: when `xai.api_key` is NOT in the list, the pager
-    /// MUST show the login screen. We assert this with `xai.api_key` present
-    /// LATER in the list (the shape of a past regression) and confirm the
-    /// pager still requires login -- because the pager only inspects
-    /// `auth_methods.first()`. This locks the failure mode of the regression:
-    /// if a future refactor makes the pager scan past `.first()`, this test
-    /// stops being equivalent to
-    /// `startup_auth_grok_com_no_provider_needs_login_pending` above and
-    /// either passes or fails on a meaningful new code path.
+    /// A `grok.com` method remains available for a later manual login, but it
+    /// must not change the default welcome-screen entry point.
     #[test]
-    fn startup_auth_xai_api_key_not_first_still_requires_login() {
+    fn startup_auth_xai_api_key_not_first_still_skips_login() {
         use xai_grok_shell::agent::auth_method::{GROK_COM_METHOD_ID, XAI_API_KEY_METHOD_ID};
 
         let methods = vec![
@@ -953,19 +922,14 @@ mod tests {
             make_auth_method(XAI_API_KEY_METHOD_ID, "xai.api_key", None),
         ];
         let (needs, _, _, _) = startup_auth_metadata(&methods);
-        assert!(
-            needs,
-            "with grok.com first, the pager must require login -- pinning \
-             the BAD-ordering failure mode (xai.api_key not first)",
-        );
+        assert!(!needs);
     }
 
     #[test]
     fn startup_auth_method_id_is_copied_not_synthesized() {
         let methods = vec![make_auth_method("grok.com", "My Login", None)];
         let (_, _, method_id, _) = startup_auth_metadata(&methods);
-        // Verify it's the exact same ID from the method, not hardcoded
-        assert_eq!(&method_id.unwrap(), methods[0].id());
+        assert!(method_id.is_none());
     }
 
     #[test]

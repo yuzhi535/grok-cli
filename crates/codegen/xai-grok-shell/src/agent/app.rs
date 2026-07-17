@@ -439,7 +439,8 @@ async fn run_headless_inner(
     use tokio_util::sync::CancellationToken;
 
     // Headless's only transport is the relay (no IPC fallback), so a session is required.
-    const HEADLESS_NO_SESSION: &str = "Headless mode requires a grok.com session. \
+    // (skipped if grok_auth_disabled for multi-provider setups)
+    const HEADLESS_NO_SESSION: &str = "Headless mode requires a grok.com session (or set disable_grok_auth = true + custom model). \
         Run `grok login` to sign in, or use `grok agent stdio` for API-key access.";
 
     // Clean up orphaned upload queue temp files from previous sessions (best-effort).
@@ -453,7 +454,11 @@ async fn run_headless_inner(
     agent_config.mode = crate::agent::config::AgentMode::Headless;
 
     let ctx = &agent_config.grok_com_config;
-    let (mut auth, did_browser_flow) = if no_browser {
+    let grok_auth_disabled = ctx.grok_auth_disabled();
+    let (mut auth, did_browser_flow) = if grok_auth_disabled {
+        // Multi-provider mode: no Grok auth at all.
+        (GrokAuth::default(), false)
+    } else if no_browser {
         // No-browser mode: only use cached credentials, skip OAuth flow
         let auth_manager = agent_config.create_auth_manager();
         match auth_manager.current() {
@@ -538,11 +543,15 @@ async fn run_headless_inner(
 
     let shared_auth_manager = Arc::new(agent_config.create_auth_manager());
 
-    let Some(relay_config) =
+    let relay_config = if grok_auth_disabled {
+        None
+    } else {
         relay_config_for_session(Some(&auth), &agent_config, &shared_auth_manager)
-    else {
-        anyhow::bail!("{HEADLESS_NO_SESSION}");
     };
+
+    if relay_config.is_none() && !grok_auth_disabled {
+        anyhow::bail!("{HEADLESS_NO_SESSION}");
+    }
 
     // Capture the grok build URL for the first-connection callback
     let grok_code_url = format!("{}/build", ctx.grok_ws_origin);

@@ -675,6 +675,9 @@ async fn run_auth_flow_inner(
 ///
 /// Returns `None` when no valid credentials can be obtained non-interactively.
 pub async fn try_ensure_fresh_auth(grok_com_config: &GrokComConfig) -> Option<GrokAuth> {
+    if grok_com_config.grok_auth_disabled() {
+        return Some(GrokAuth::default());
+    }
     let grok_home = grok_home::grok_home();
     let auth_manager = std::sync::Arc::new(AuthManager::new(&grok_home, grok_com_config.clone()));
 
@@ -801,6 +804,11 @@ pub async fn ensure_authenticated_with_override(
     message_prefix: Option<&str>,
     login_override: LoginTransportOverride,
 ) -> anyhow::Result<GrokAuth> {
+    if grok_com_config.grok_auth_disabled() {
+        // Multi-provider / custom models mode: no Grok auth.
+        return Ok(GrokAuth::default());
+    }
+
     let grok_home = grok_home::grok_home();
     let auth_manager = Arc::new(AuthManager::new(&grok_home, grok_com_config.clone()));
 
@@ -848,6 +856,9 @@ pub async fn ensure_authenticated_or_noninteractive(
     has_noninteractive_auth: bool,
     message_prefix: Option<&str>,
 ) -> anyhow::Result<Option<GrokAuth>> {
+    if grok_com_config.grok_auth_disabled() {
+        return Ok(Some(GrokAuth::default()));
+    }
     if has_noninteractive_auth {
         Ok(try_ensure_fresh_auth(grok_com_config).await)
     } else {

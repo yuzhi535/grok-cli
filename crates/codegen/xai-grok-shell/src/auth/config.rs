@@ -88,6 +88,13 @@ pub struct GrokComConfig {
     /// multi-method fallthrough. Config.toml only (`[auth] preferred_method`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_method: Option<PreferredAuthMethod>,
+
+    /// When true (or env GROK_DISABLE_GROK_AUTH=1), skip Grok/xAI session
+    /// authentication entirely. Intended for using this as a multi-provider
+    /// client with custom models (Ollama, OpenAI compatible endpoints, etc).
+    /// Default is false (original Grok auth behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_grok_auth: Option<bool>,
 }
 /// Team login restriction. TOML string or array; an empty array fails closed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +215,25 @@ impl GrokComConfig {
     /// this by not consulting automatic flow helpers.
     pub fn blocks_automatic_oidc(&self) -> bool {
         matches!(self.preferred_method, Some(PreferredAuthMethod::ApiKey))
+    }
+
+    /// Whether Grok/xAI session auth (login, relay, etc.) should be skipped entirely.
+    /// Useful when repurposing as a multi-provider client with only custom models.
+    /// This is opt-in; normal startup merely skips the login screen and still
+    /// permits an explicit `gork login`.
+    pub fn grok_auth_disabled(&self) -> bool {
+        let configured = self.disable_grok_auth.unwrap_or(false);
+        let env_disabled = std::env::var("GROK_DISABLE_GROK_AUTH")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+        let env_forced_on = std::env::var("GROK_DISABLE_GROK_AUTH")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no"))
+            .unwrap_or(false);
+        if env_forced_on {
+            false
+        } else {
+            configured || env_disabled
+        }
     }
     /// The auth.json scope key for this config.
     pub fn auth_scope(&self) -> String {
