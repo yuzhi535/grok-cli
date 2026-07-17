@@ -90,27 +90,65 @@ jobs:
           cd dist
           tar -czvf "../${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" "${BINARY_NAME}"
           cd ..
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" \
+              > "${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz.sha256"
+          else
+            shasum -a 256 "${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" \
+              > "${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz.sha256"
+          fi
           ls -lh "${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz"
 
       - name: Upload build artifact (CI)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.pretty_name }}
-          path: ${{ env.BINARY_NAME }}-${{ matrix.pretty_name }}.tar.gz
+          path: |
+            ${{ env.BINARY_NAME }}-${{ matrix.pretty_name }}.tar.gz
+            ${{ env.BINARY_NAME }}-${{ matrix.pretty_name }}.tar.gz.sha256
           retention-days: 14
 
-      # Versioned releases only fire when a v* tag is pushed.
-      - name: Publish to GitHub Release (tags)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  publish-tag-release:
+    name: Publish tagged Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: >
+      always()
+      && startsWith(github.ref, 'refs/tags/')
+      && needs.build.result != 'cancelled'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
         with:
-          files: |
-            ${{ env.BINARY_NAME }}-${{ matrix.pretty_name }}.tar.gz
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+          pattern: ${{ env.BINARY_NAME }}-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish tagged release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(artifacts/${BINARY_NAME}-*.tar.gz artifacts/${BINARY_NAME}-*.tar.gz.sha256)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No build artifacts found — nothing to publish."
+            exit 1
+          fi
+
+          bash scripts/generate-release-notes.sh \
+            "${GITHUB_REF_NAME}" "${GITHUB_SHA}" "${GITHUB_REPOSITORY}" artifacts release-notes.md
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "gork ${GITHUB_REF_NAME}" \
+            --notes "$(<release-notes.md)" \
+            --generate-notes \
+            "${files[@]}"
 
   # Rolling "latest" release on every successful push to main.
   # Uses `always()` so a single failed matrix leg does not block publishing
@@ -129,6 +167,9 @@ jobs:
       cancel-in-progress: true
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -160,23 +201,15 @@ jobs:
           # Remove old latest release + tag if it exists
           gh release delete latest --repo "${{ github.repository }}" --cleanup-tag --yes 2>/dev/null || true
 
-          NOTES="自动构建于 $(date -u +'%Y-%m-%d %H:%M:%S UTC')
-
-          Binary: \`${BINARY_NAME}\`
-          Commit: ${{ github.sha }}
-          https://github.com/${{ github.repository }}/commit/${{ github.sha }}
-          "
+          bash scripts/generate-release-notes.sh \
+            latest "${GITHUB_SHA}" "${GITHUB_REPOSITORY}" artifacts release-notes.md
 
           gh release create latest \
             --repo "${{ github.repository }}" \
             --title "Latest build (main)" \
-            --notes "$NOTES" \
+            --notes-file release-notes.md \
             --prerelease \
-            --target "${{ github.sha }}"
-
-          for file in "${files[@]}"; do
-            echo "Uploading $file"
-            gh release upload latest "$file" --repo "${{ github.repository }}" --clobber
-          done
+            --target "${{ github.sha }}" \
+            "${files[@]}"
 
           echo "✅ Latest release updated with ${#files[@]} platform build(s)."
