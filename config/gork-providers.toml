@@ -1,0 +1,60 @@
+# Managed by the local gork provider bridge. Keep credentials in environment
+# variables or OpenCode's auth store; do not put secrets in this file.
+
+[endpoints]
+# This is the dynamic model catalog. Every current OpenRouter text model is
+# available in `gork models` without static entries here.
+models_base_url = "https://openrouter.ai/api/v1"
+
+[models]
+default = "openai-oauth-gpt-5.4"
+
+[model."openai-oauth-gpt-5.4"]
+model = "gpt-5.4"
+base_url = "https://api.openai.com/v1"
+api_backend = "responses"
+env_key = "GORK_OPENAI_OAUTH_ACCESS_TOKEN"
+name = "OpenAI GPT-5.4 (OpenCode OAuth)"
+context_window = 400000
+
+# Anthropic remains available when ANTHROPIC_API_KEY is set, but is not the
+# default provider. Change `model` when you choose a Claude version.
+[model.anthropic-claude]
+model = "claude-sonnet-4-5"
+base_url = "https://api.anthropic.com/v1"
+api_backend = "messages"
+env_key = "ANTHROPIC_API_KEY"
+name = "Anthropic Claude"
+context_window = 200000
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com/v1"
+api_backend = "chat_completions"
+env_key = "DEEPSEEK_API_KEY"
+name = "DeepSeek V4 Pro"
+context_window = 1000000
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com/v1"
+api_backend = "chat_completions"
+env_key = "DEEPSEEK_API_KEY"
+name = "DeepSeek V4 Flash"
+context_window = 1000000
+
+[model.kimi-k3]
+model = "kimi-k3"
+base_url = "https://api.moonshot.ai/v1"
+api_backend = "chat_completions"
+env_key = "MOONSHOT_API_KEY"
+name = "Kimi K3"
+context_window = 1000000
+
+[model."kimi-k2.6"]
+model = "kimi-k2.6"
+base_url = "https://api.moonshot.ai/v1"
+api_backend = "chat_completions"
+env_key = "MOONSHOT_API_KEY"
+name = "Kimi K2.6"
+context_window = 256000
