@@ -1,0 +1,55 @@
+#!/bin/zsh
+# Launch gork with credentials kept in OpenCode's local credential store.
+set -euo pipefail
+
+auth_file="${OPENCODE_AUTH_FILE:-$HOME/.local/share/opencode/auth.json}"
+binary="${GORK_BINARY:-$HOME/.local/share/gork/gork-bin}"
+# Keep this fork's config and runtime state separate from the original Grok CLI.
+export GROK_HOME="${GROK_HOME:-$HOME/.gork}"
+
+if ! command -v jq >/dev/null 2>&1; then
+  print -u2 "gork: jq is required to read the OpenCode credential store"
+  exit 1
+fi
+
+if [[ ! -r "$auth_file" ]]; then
+  print -u2 "gork: OpenCode credentials not found at $auth_file"
+  print -u2 "gork: run 'opencode auth login' first"
+  exit 1
+fi
+
+if [[ ! -x "$binary" ]]; then
+  print -u2 "gork: managed binary not found at $binary"
+  exit 1
+fi
+
+openai_token="$(jq -er '.openai.access // empty' "$auth_file")"
+openai_expires="$(jq -er '.openai.expires // 0' "$auth_file")"
+openrouter_key="$(jq -er '.openrouter.key // empty' "$auth_file")"
+
+if [[ -z "$openai_token" ]]; then
+  print -u2 "gork: no OpenAI OAuth access token; run 'opencode auth login'"
+  exit 1
+fi
+
+# OpenCode stores this OAuth expiry as Unix milliseconds. Do not launch gork
+# with a token that is already expired; OpenCode remains the refresh authority.
+if [[ "$openai_expires" =~ '^[0-9]+$' ]] && (( openai_expires > 1000000000000 )); then
+  now_ms=$(( $(date +%s) * 1000 ))
+  if (( openai_expires <= now_ms )); then
+    print -u2 "gork: OpenAI OAuth has expired; run 'opencode auth login' and retry"
+    exit 1
+  fi
+fi
+
+if [[ -z "$openrouter_key" ]]; then
+  print -u2 "gork: no OpenRouter API key; run 'opencode auth login'"
+  exit 1
+fi
+
+# gork uses these environment variables only in this child process. Neither is
+# written to gork's config, history, or shell environment.
+export GORK_OPENAI_OAUTH_ACCESS_TOKEN="$openai_token"
+export XAI_API_KEY="$openrouter_key"
+
+exec "$binary" "$@"
