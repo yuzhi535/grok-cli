@@ -1028,7 +1028,16 @@ async fn run_agent_command(
             }
         }
     }
-    let early_prefetch = xai_grok_shell::agent::models::start_early_prefetch(None);
+    // Load the local configuration before starting any remote prefetch. In
+    // multi-provider mode `disable_grok_auth` means no xAI traffic at startup,
+    // including the models and remote-settings requests.
+    let raw_config = xai_grok_shell::config::load_effective_config()
+        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+    let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
+        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {}", e))?;
+    let early_prefetch = xai_grok_shell::agent::models::start_early_prefetch(Some(
+        agent_config.grok_com_config.clone(),
+    ));
     xai_grok_shell::agent::mvp_agent::warm_async_http_client();
     tokio::task::spawn_blocking(|| {});
     let is_stdio = matches!(agent_args.mode, Some(AgentCmd::Stdio));
@@ -1053,10 +1062,6 @@ async fn run_agent_command(
     }
     let remote_settings = join_early_prefetch(early_prefetch);
     xai_grok_shell::util::config::set_remote_campaigns_from_settings(remote_settings.as_ref());
-    let raw_config = xai_grok_shell::config::load_effective_config()
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
-    let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
-        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {}", e))?;
     agent_config.default_model_override = agent_args.model.clone();
     agent_config.reasoning_effort_override = agent_args
         .reasoning_effort

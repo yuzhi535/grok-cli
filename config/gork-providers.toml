@@ -6,6 +6,22 @@
 # available in `gork models` without static entries here.
 models_base_url = "https://openrouter.ai/api/v1"
 
+# This distribution is a multi-provider client. Do not require a Grok/xAI
+# browser session before starting; the selected model's own credential is used
+# when a request is made instead.
+[grok_com_config]
+disable_grok_auth = true
+
+[cli]
+# The upstream auto-update endpoint is hosted at x.ai. Distribution updates are
+# intentionally opt-in for this multi-provider build.
+auto_update = false
+
+[features]
+# Disable the upstream model catalog and remote-settings fetches as well. Model
+# definitions above and their own provider endpoints remain available.
+remote_fetch = false
+
 [models]
 default = "openai-oauth-gpt-5.4"
 

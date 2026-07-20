@@ -122,10 +122,12 @@ cargo build -p xai-grok-pager-bin --release  # release binary: target/release/go
 cargo check -p xai-grok-pager-bin            # fast validation
 ```
 
-The binary artifact is named `gork`. It opens directly to the main TUI; sign in
-only when needed with `/login`, `gork login`, or `--force-login`. Its user-level
-state and configuration default to `~/.gork`; set `GORK_HOME` to use a different
-location (`GROK_HOME` remains accepted for compatibility). See the
+The binary artifact is named `gork`. It opens directly to the main TUI and the
+bundled multi-provider configuration does not require a Grok/xAI login. Supply
+the credential required by the model you select instead. `/login`, `gork login`,
+and `--force-login` remain available when you explicitly want a Grok session.
+Its user-level state and configuration default to `~/.gork`; set `GORK_HOME` to
+use a different location (`GROK_HOME` remains accepted for compatibility). See the
 [authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
 
 ## Documentation
