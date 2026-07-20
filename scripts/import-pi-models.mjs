@@ -38,16 +38,32 @@ function apiBackend(api) {
   }
 }
 
+function openAiCompatibleBaseUrl(baseUrl) {
+  const normalized = String(baseUrl).replace(/\/+$/, "");
+
+  try {
+    const url = new URL(normalized);
+    if (url.hostname === "aigc.sankuai.com" && url.pathname === "/v1/anthropic") {
+      url.pathname = "/v1/openai/native";
+      return url.toString().replace(/\/$/, "");
+    }
+  } catch {
+    // Preserve an unparseable provider URL; the model validation will surface it.
+  }
+  return normalized;
+}
+
 function modelRecord({ provider, providerConfig = {}, model, source }) {
   const id = model?.id;
+  const api = model?.api ?? providerConfig.api;
   const baseUrl = model?.baseUrl ?? providerConfig.baseUrl;
-  const backend = apiBackend(model?.api ?? providerConfig.api);
+  const backend = apiBackend(api);
   if (!id || !baseUrl || !backend) return undefined;
 
   return {
     provider,
     id: String(id),
-    baseUrl: String(baseUrl),
+    baseUrl: openAiCompatibleBaseUrl(baseUrl),
     backend,
     name: model.name ? String(model.name) : String(id),
     contextWindow: positiveInteger(model.contextWindow),
@@ -128,6 +144,25 @@ export function replaceImportBlock(existing, block) {
   return `${existing.slice(0, start)}${block}${existing.slice(end + BLOCK_END.length)}`;
 }
 
+export function removeLegacyPiModelBlocks(existing) {
+  const start = existing.indexOf(BLOCK_START);
+  const legacy = start < 0 ? existing : existing.slice(0, start);
+  const managed = start < 0 ? "" : existing.slice(start);
+  const lines = legacy.split(/(?<=\n)/);
+  const output = [];
+  let skipping = false;
+
+  for (const line of lines) {
+    if (/^\[model\.(?:"pi-|pi-)/.test(line)) {
+      skipping = true;
+      continue;
+    }
+    if (skipping && /^\[/.test(line)) skipping = false;
+    if (!skipping) output.push(line);
+  }
+  return `${output.join("")}${managed}`;
+}
+
 function parseArgs(args) {
   const options = { sourceDir: path.join(os.homedir(), ".pi", "agent"), dryRun: false };
   for (let i = 0; i < args.length; i += 1) {
@@ -153,7 +188,7 @@ export function importPiModels({ sourceDir, target = defaultTarget(), dryRun = f
   const settings = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, "utf8")) : {};
   const block = renderImportBlock(records, settings);
   const existing = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
-  const output = replaceImportBlock(existing, block);
+  const output = replaceImportBlock(removeLegacyPiModelBlocks(existing), block);
   if (!dryRun) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, output, { mode: 0o600 });
