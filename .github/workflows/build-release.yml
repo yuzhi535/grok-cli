@@ -150,25 +150,27 @@ jobs:
             --generate-notes \
             "${files[@]}"
 
-  # Rolling "latest" release on every successful push to main.
-  # Uses `always()` so a single failed matrix leg does not block publishing
-  # artifacts from the legs that did succeed.
-  update-latest-release:
-    name: Update "latest" Release (main)
+  # Every successful push to main gets an immutable prerelease. This preserves
+  # prior artifacts instead of deleting and replacing a rolling `latest` tag.
+  publish-main-prerelease:
+    name: Publish immutable prerelease (main)
     runs-on: ubuntu-latest
     needs: build
     if: >
-      always()
-      && github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main'
       && github.event_name == 'push'
-      && needs.build.result != 'cancelled'
-    concurrency:
-      group: update-latest-release
-      cancel-in-progress: true
+      && needs.build.result == 'success'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Derive immutable prerelease version
+        id: version
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          tag="v0.0.0-dev.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.${short_sha}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -176,18 +178,15 @@ jobs:
           pattern: ${{ env.BINARY_NAME }}-*
           path: artifacts
           merge-multiple: true
-          # Don't fail the whole job if one platform never uploaded.
-          # (download-artifact@v4 fails when no artifacts match by default)
-        continue-on-error: true
 
-      - name: Update latest release
+      - name: Publish immutable prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           shopt -s nullglob
-          files=(artifacts/${BINARY_NAME}-*.tar.gz)
+          files=(artifacts/${BINARY_NAME}-*.tar.gz artifacts/${BINARY_NAME}-*.tar.gz.sha256)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No build artifacts found — nothing to publish."
             exit 1
@@ -196,20 +195,18 @@ jobs:
           echo "Found ${#files[@]} artifact(s):"
           ls -lh "${files[@]}"
 
-          echo "Updating 'latest' release with fresh builds from main..."
-
-          # Remove old latest release + tag if it exists
-          gh release delete latest --repo "${{ github.repository }}" --cleanup-tag --yes 2>/dev/null || true
+          tag="${{ steps.version.outputs.tag }}"
+          echo "Publishing immutable prerelease ${tag}..."
 
           bash scripts/generate-release-notes.sh \
-            latest "${GITHUB_SHA}" "${GITHUB_REPOSITORY}" artifacts release-notes.md
+            "${tag}" "${GITHUB_SHA}" "${GITHUB_REPOSITORY}" artifacts release-notes.md
 
-          gh release create latest \
+          gh release create "${tag}" \
             --repo "${{ github.repository }}" \
-            --title "Latest build (main)" \
+            --title "gork ${tag}" \
             --notes-file release-notes.md \
             --prerelease \
             --target "${{ github.sha }}" \
             "${files[@]}"
 
-          echo "✅ Latest release updated with ${#files[@]} platform build(s)."
+          echo "✅ Published ${tag} with ${#files[@]} artifact(s)."
