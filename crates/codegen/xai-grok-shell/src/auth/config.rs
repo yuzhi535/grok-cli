@@ -326,6 +326,9 @@ impl Default for GrokComConfig {
             disable_api_key_auth: std::env::var("GROK_DISABLE_API_KEY_AUTH")
                 .ok()
                 .map(|v| env_flag_enabled(&v)),
+            disable_grok_auth: std::env::var("GROK_DISABLE_GROK_AUTH")
+                .ok()
+                .map(|v| env_flag_enabled(&v)),
             force_login_team_uuid: None,
             preferred_method: None,
         }

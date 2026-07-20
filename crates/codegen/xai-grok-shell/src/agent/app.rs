@@ -577,12 +577,21 @@ async fn run_headless_inner(
 
     let cancel = CancellationToken::new();
 
-    let (agent_to_ws_tx, _relay_handle) = spawn_relay_connection_with_callback(
-        relay_config,
-        ws_to_agent_tx.clone(),
-        Some(cancel.clone()),
-        Some(on_first_connect),
-    );
+    let (agent_to_ws_tx, _relay_handle) = if let Some(relay_config) = relay_config {
+        let (tx, handle) = spawn_relay_connection_with_callback(
+            relay_config,
+            ws_to_agent_tx.clone(),
+            Some(cancel.clone()),
+            Some(on_first_connect),
+        );
+        (tx, Some(handle))
+    } else {
+        // Keep the existing outbound bridge alive without starting a Grok relay.
+        // Its receiver is intentionally dropped so persisted responses follow the
+        // same no-active-relay path as a disconnected websocket.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        (tx, None)
+    };
 
     // Spawn the agent in a LocalSet that lives for the entire process
     let local_set = tokio::task::LocalSet::new();
