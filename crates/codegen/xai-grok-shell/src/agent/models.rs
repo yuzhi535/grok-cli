@@ -1556,6 +1556,13 @@ fn resolve_prefetch_env_from_parts(
 }
 
 fn resolve_prefetch_env(grok_com_config: Option<GrokComConfig>) -> Option<PrefetchEnv> {
+    if grok_com_config
+        .as_ref()
+        .is_some_and(GrokComConfig::grok_auth_disabled)
+    {
+        tracing::info!("startup model/settings prefetch skipped: Grok auth disabled");
+        return None;
+    }
     let grok_home = crate::util::grok_home::grok_home();
     let auth_manager = AuthManager::new(&grok_home, grok_com_config.unwrap_or_default());
     let auth = auth_manager.current();
