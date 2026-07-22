@@ -6041,7 +6041,8 @@ mod tests {
         assert!(
             lines.iter().any(|l| matches!(
                 l,
-                DashboardLine::Header { state, count } if *state == RowState::Working && *count == 2
+                DashboardLine::Header { state, count }
+if *state == RowState::Working && *count == 2
             )),
             "collapsed Working header must still render with its true count",
         );
@@ -6143,7 +6144,8 @@ mod tests {
         assert!(
             lines.iter().any(|l| matches!(
                 l,
-                DashboardLine::Header { state, count } if *state == RowState::Idle && *count == total as usize
+                DashboardLine::Header { state, count }
+if *state == RowState::Idle && *count == total as usize
             )),
             "Idle header keeps the true total count",
         );

@@ -1448,7 +1448,8 @@ mod official_source_tests {
         assert_eq!(sources[0].name, "my-plugins");
         assert!(matches!(
             &sources[0].kind,
-            xai_grok_plugin_marketplace::SourceKind::Local { path } if path == &dir
+            xai_grok_plugin_marketplace::SourceKind::Local { path }
+if path == &dir
         ));
         // The path must not be mangled into a git URL.
         let raw = std::fs::read_to_string(&config_path).unwrap();

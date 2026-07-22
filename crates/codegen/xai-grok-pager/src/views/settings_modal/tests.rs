@@ -41,7 +41,8 @@ fn contextual_hints_group_sub_sheet_flow() {
     assert!(
         !s.rows.iter().any(|r| matches!(
             r,
-            RowEntry::Setting { key, .. } if key.starts_with("contextual_hints.")
+            RowEntry::Setting { key, .. }
+if key.starts_with("contextual_hints.")
         )),
         "child rows must be hidden from the top-level list",
     );
@@ -648,6 +649,10 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             "scroll_lines",
             "invert_scroll",
             "keep_text_selection",
+            // SHARED-owned combine_queued_prompts (Editor category; read by
+            // both the pager drain and the shell promote. Registered before
+            // multiline_mode, so it renders first).
+            "combine_queued_prompts",
             // PAGER-owned multiline (Editor category).
             "multiline_mode",
             // SHELL-owned prompt_suggestions (Editor; tab autocomplete

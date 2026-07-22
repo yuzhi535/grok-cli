@@ -274,7 +274,8 @@ fn compaction_preserves_inherited_prefix() {
                     .any(|p| {
                         matches!(
                             p, xai_grok_sampling_types::conversation::ContentPart::Text {
-                            text } if text.contains("<background_context>")
+                            text }
+if text.contains("<background_context>")
                         )
                     })
             } else {
@@ -326,6 +327,7 @@ fn resumable_source_returns_info_for_completed_subagent() {
                 subagent_id: "sub-resume".into(),
                 parent_session_id: "parent-1".into(),
                 parent_prompt_id: Some("prompt-1".into()),
+                owner: SubagentOwner::Task,
                 child_session_id: "child-resume".into(),
                 description: "resumable task".into(),
                 subagent_type: "general-purpose".into(),
@@ -711,6 +713,35 @@ fn coordinator_with_completed(id: &str) -> SubagentCoordinator {
             None,
         );
     coordinator
+}
+#[tokio::test]
+async fn loop_unit_active_tracks_and_prunes_owned_subagents() {
+    let mut coordinator = SubagentCoordinator::new();
+    coordinator
+        .insert(
+            dummy_tracker("iter-1", "root-sess", "general-purpose", "loop: watch ci"),
+        );
+    coordinator.record_loop_owner("iter-1", "task-42");
+    assert!(coordinator.loop_unit_active("task-42"));
+    assert!(! coordinator.loop_unit_active("other-task"));
+    assert_eq!(
+        coordinator.loop_task_id_of_child_session("iter-1"), Some("task-42".to_string())
+    );
+    assert_eq!(coordinator.loop_task_id_of_child_session("unknown"), None);
+    coordinator
+        .move_to_completed(
+            "iter-1",
+            "loop: watch ci".into(),
+            "general-purpose".into(),
+            SubagentResult {
+                success: true,
+                subagent_id: "iter-1".into(),
+                child_session_id: "iter-1".into(),
+                ..Default::default()
+            },
+            None,
+        );
+    assert!(! coordinator.loop_unit_active("task-42"));
 }
 /// End-to-end glue: gate ON + a worktree present runs the completion
 /// sequence (snapshot → persist ref to meta.json AND in-memory → remove)
@@ -1342,6 +1373,7 @@ fn resumable_source_rejects_cross_session_lookup() {
                 subagent_id: "sub-other".into(),
                 parent_session_id: "session-A".into(),
                 parent_prompt_id: None,
+                owner: SubagentOwner::Task,
                 child_session_id: "child-other".into(),
                 description: "other task".into(),
                 subagent_type: "explore".into(),
@@ -1639,6 +1671,7 @@ fn reconcile_orphan_skips_pending_ids_in_live_registry() {
             persona: None,
             parent_prompt_id: None,
             parent_session_id: "parent-x".to_string(),
+            owner: SubagentOwner::Task,
             started_at: std::time::Instant::now(),
             run_in_background: false,
             surface_completion: true,
@@ -2097,6 +2130,7 @@ fn notification_subagent_spawned_includes_resumed_from() {
         role: None,
         model: None,
         resumed_from: Some("prev-agent-id".into()),
+        workflow_run_id: None,
     };
     let json = serde_json::to_value(&notification).unwrap();
     assert_eq!(json["resumed_from"], "prev-agent-id");
@@ -2117,6 +2151,7 @@ fn notification_subagent_spawned_includes_resumed_from() {
         role: None,
         model: None,
         resumed_from: None,
+        workflow_run_id: None,
     };
     let json = serde_json::to_value(&fresh).unwrap();
     assert!(json.get("resumed_from").is_none());
@@ -2161,6 +2196,7 @@ fn completed_subagent_propagates_resumed_from() {
                 subagent_id: "sub-prov".into(),
                 parent_session_id: "parent".into(),
                 parent_prompt_id: Some("prompt-1".into()),
+                owner: SubagentOwner::Task,
                 child_session_id: "child-prov".into(),
                 description: "provenance test".into(),
                 subagent_type: "general-purpose".into(),
@@ -2298,6 +2334,7 @@ async fn outstanding_for_prompt_includes_pending_and_active() {
             persona: None,
             parent_prompt_id: Some("prompt-X".to_string()),
             parent_session_id: String::new(),
+            owner: SubagentOwner::Task,
             started_at: std::time::Instant::now(),
             run_in_background: false,
             surface_completion: true,
@@ -2410,6 +2447,7 @@ fn outstanding_for_prompt_returns_sorted_ids() {
             persona: None,
             parent_prompt_id: Some("p".to_string()),
             parent_session_id: String::new(),
+            owner: SubagentOwner::Task,
             started_at: std::time::Instant::now(),
             run_in_background: false,
             surface_completion: true,
@@ -2424,6 +2462,7 @@ fn outstanding_for_prompt_returns_sorted_ids() {
             persona: None,
             parent_prompt_id: Some("p".to_string()),
             parent_session_id: String::new(),
+            owner: SubagentOwner::Task,
             started_at: std::time::Instant::now(),
             run_in_background: false,
             surface_completion: true,
@@ -2869,6 +2908,51 @@ async fn resolve_subagent_agent_definition_unknown_model_falls_through_to_inheri
         .await;
     assert_eq!(config.model, "grok-4.5");
     assert_eq!(model_id.0.as_ref(), "grok-4.5");
+}
+/// Spawn-time credentials are cache-only: a cold spawn has no key,
+/// never the parent session key.
+#[tokio::test]
+async fn subagent_override_provider_model_spawns_cache_only_credentials() {
+    use xai_grok_agent::config::ModelOverride;
+    let dir = tempfile::tempdir().unwrap();
+    let provider = crate::auth::test_counting_provider(
+        "test-subagent-spawn",
+        dir.path(),
+    );
+    let mut entry = test_model_entry("proxied-model");
+    entry.info.base_url = "https://gateway.example/v1".to_string();
+    entry.auth_provider = Some(provider.clone());
+    let mut models = indexmap::IndexMap::new();
+    models.insert("proxied".to_string(), entry);
+    let mut ctx = ctx_with_toggle(HashMap::new());
+    ctx.sampling_config.model = "grok-4.5".to_string();
+    ctx.model_id = acp::ModelId::new("grok-4.5");
+    ctx.available_models = models;
+    ctx.auth = Some(crate::auth::GrokAuth {
+        key: "parent-session-jwt".to_string(),
+        ..Default::default()
+    });
+    ctx.subagent_model_overrides.insert("explore".to_string(), "proxied".to_string());
+    let (config, model_id) = resolve_subagent_sampling_config(
+            "explore",
+            &ModelOverride::Inherit,
+            &ctx,
+        )
+        .await;
+    assert_eq!(model_id.0.as_ref(), "proxied");
+    assert_eq!(
+        config.api_key, None,
+        "a cold cache spawns with no key, never the parent session key"
+    );
+    provider.ensure_fresh_token(None).await.rotated().unwrap();
+    let (config, _) = resolve_subagent_sampling_config(
+            "explore",
+            &ModelOverride::Inherit,
+            &ctx,
+        )
+        .await;
+    assert_eq!(config.api_key.as_deref(), Some("tok-1"));
+    assert_eq!(config.base_url, "https://gateway.example/v1");
 }
 #[test]
 fn key_prefix_truncates_to_8_chars() {
