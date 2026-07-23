@@ -7,15 +7,39 @@
     <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
   </picture>
   <br>
-  Grok Build (<code>gork</code>)
+10→  Gcode
 </h1>
 
-> **注意**：这是由 [yuzhi535](https://github.com/yuzhi535) 重新构建和维护的版本（rebuilt fork）。  
-> 基于原 SpaceXAI Grok Build 项目，增加了 GitHub Actions 自动构建流程（每次 commit 自动构建，并发布到 Releases，支持 Mac）。
+> **Gcode** 是基于 [xAI Grok Build](https://github.com/xai-org/grok-build) 的社区增强版（fork），二进制名改为 `gcode`。
+> 保留上游全部功能的同时，增加了自动构建、多供应商支持和开箱即用的配置。
+
+</div>
+
+---
+
+## 与上游 Grok Build 的区别
+
+| 特性 | 上游 Grok Build | Gcode |
+|------|:---:|:---:|
+21→| 二进制名 | `grok` / `gork` | `gcode` |
+| xAI 登录 | 必需 | **可选**（多供应商模式） |
+| 模型支持 | xAI Grok | **OpenAI · DeepSeek · Anthropic · Kimi 等** |
+| 自动构建 | 无 | **每次 push 自动 CI 构建 + 发布** |
+| 开箱配置 | 需自行配置 | **预置多供应商 config** |
+| 上游合并 | — | 最小改动策略，便于追踪上游 |
+
+### 核心增强
+
+30→- **无需 xAI 登录**：内置多供应商桥接，直接用 OpenAI / DeepSeek / Anthropic 等账号即可使用。
+- **自动 CI/CD**：push 到 `main` 自动构建 macOS ARM64 + Linux x86_64，发布到 GitHub Releases。
+- **预置模型配置**：内置 PI 模型导入工具，`gcode models` 即可查看所有可用模型。
+- **上游友好**：改动集中在一只手能数过来的文件中，合并上游更新时冲突极少。
+
+---
 
 **Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
 full-screen TUI that understands your codebase, edits files, executes shell
-commands, searches the web, and manages long-running tasks — interactively,
+40→commands, searches the web, and manages long-running tasks — interactively,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
@@ -27,34 +51,31 @@ Protocol (ACP).
 [Contributing](#contributing) ·
 [License](#license)
 
+50→
 ![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
 
 **Learn more about the original Grok Build at [x.ai/cli](https://x.ai/cli)**
 
-> This is a personal rebuilt fork. See the note at the top of this README.
-
 A small `SOURCE_REV` file at the root records the full monorepo commit SHA
 for the version of the code present in this tree.
-
-</div>
 
 ---
 
 ## Installing the released binary
 
-每次 push 到 `main` 会自动构建，并更新 [Releases](https://github.com/yuzhi535/grok-cli/releases) 里的 **`latest`** 滚动发布。当前提供：
+每次 push 到 `main` 会自动构建，并更新 [Releases](https://github.com/yuzhi535/gcode/releases) 里的 **`latest`** 滚动发布。当前提供：
 
 | 平台 | 产物 |
 |------|------|
-| macOS Apple Silicon | `gork-macos-arm64.tar.gz` |
-| Linux x86_64 | `gork-linux-x86_64.tar.gz` |
+| macOS Apple Silicon | `gcode-macos-arm64.tar.gz` |
+| Linux x86_64 | `gcode-linux-x86_64.tar.gz` |
 
 ### macOS (Apple Silicon)
 
 ```sh
-curl -fsSL -o gork.tar.gz \
-  https://github.com/yuzhi535/grok-cli/releases/download/latest/gork-macos-arm64.tar.gz
-tar -xzf gork.tar.gz
+curl -fsSL -o gcode.tar.gz \
+  https://github.com/yuzhi535/gcode/releases/download/latest/gcode-macos-arm64.tar.gz
+tar -xzf gcode.tar.gz
 chmod +x gork
 sudo mv gork /usr/local/bin/gork   # 或放到任意在 PATH 里的目录
 gork --version
@@ -69,9 +90,9 @@ xattr -dr com.apple.quarantine "$(command -v gork)"
 ### Linux (x86_64)
 
 ```sh
-curl -fsSL -o gork.tar.gz \
-  https://github.com/yuzhi535/grok-cli/releases/download/latest/gork-linux-x86_64.tar.gz
-tar -xzf gork.tar.gz
+curl -fsSL -o gcode.tar.gz \
+  https://github.com/yuzhi535/gcode/releases/download/latest/gcode-linux-x86_64.tar.gz
+tar -xzf gcode.tar.gz
 chmod +x gork
 sudo mv gork /usr/local/bin/gork
 gork --version
@@ -83,10 +104,10 @@ gork --version
 
 ```sh
 # 示例
-https://github.com/yuzhi535/grok-cli/releases/download/v0.1.0/gork-macos-arm64.tar.gz
+https://github.com/yuzhi535/gcode/releases/download/v0.1.0/gcode-macos-arm64.tar.gz
 ```
 
-也可以在 Releases 页面手动下载：https://github.com/yuzhi535/grok-cli/releases
+也可以在 Releases 页面手动下载：https://github.com/yuzhi535/gcode/releases
 
 ### 官方原版
 
@@ -117,16 +138,16 @@ Requirements:
   and not currently tested from this tree.
 
 ```sh
-cargo run -p xai-grok-pager-bin              # build + launch the TUI (`gork`)
-cargo build -p xai-grok-pager-bin --release  # release binary: target/release/gork
+cargo run -p xai-grok-pager-bin              # build + launch the TUI (`gcode`)
+cargo build -p xai-grok-pager-bin --release  # release binary: target/release/gcode
 cargo check -p xai-grok-pager-bin            # fast validation
 ```
 
-The binary artifact is named `gork`. It opens directly to the main TUI and the
+The binary artifact is named `gcode`. It opens directly to the main TUI and the
 bundled multi-provider configuration does not require a Grok/xAI login. Supply
-the credential required by the model you select instead. `/login`, `gork login`,
+the credential required by the model you select instead. `/login`, `gcode login`,
 and `--force-login` remain available when you explicitly want a Grok session.
-Its user-level state and configuration default to `~/.gork`; set `GORK_HOME` to
+Its user-level state and configuration default to `~/.gcode`; set `GCODE_HOME` to
 use a different location (`GROK_HOME` remains accepted for compatibility). See the
 [authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
 
@@ -144,7 +165,7 @@ MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
 
 | Path | Contents |
 |------|----------|
-| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `gork` binary |
+| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `gcode` binary |
 | `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
 | `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
 | `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
