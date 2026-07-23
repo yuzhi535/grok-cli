@@ -7,7 +7,7 @@
     <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
   </picture>
   <br>
-10→  Gcode
+  Gcode
 </h1>
 
 > **Gcode** 是基于 [xAI Grok Build](https://github.com/xai-org/grok-build) 的社区增强版（fork），二进制名改为 `gcode`。
@@ -76,15 +76,15 @@ for the version of the code present in this tree.
 curl -fsSL -o gcode.tar.gz \
   https://github.com/yuzhi535/gcode/releases/download/latest/gcode-macos-arm64.tar.gz
 tar -xzf gcode.tar.gz
-chmod +x gork
-sudo mv gork /usr/local/bin/gork   # 或放到任意在 PATH 里的目录
-gork --version
+chmod +x gcode
+sudo mv gcode /usr/local/bin/gcode   # 或放到任意在 PATH 里的目录
+gcode --version
 ```
 
 若 macOS 提示「无法验证开发者」：
 
 ```sh
-xattr -dr com.apple.quarantine "$(command -v gork)"
+xattr -dr com.apple.quarantine "$(command -v gcode)"
 ```
 
 ### Linux (x86_64)
@@ -93,9 +93,9 @@ xattr -dr com.apple.quarantine "$(command -v gork)"
 curl -fsSL -o gcode.tar.gz \
   https://github.com/yuzhi535/gcode/releases/download/latest/gcode-linux-x86_64.tar.gz
 tar -xzf gcode.tar.gz
-chmod +x gork
-sudo mv gork /usr/local/bin/gork
-gork --version
+chmod +x gcode
+sudo mv gcode /usr/local/bin/gcode
+gcode --version
 ```
 
 ### 指定版本
