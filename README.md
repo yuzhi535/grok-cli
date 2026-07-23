@@ -21,7 +21,7 @@
 
 | 特性 | 上游 Grok Build | Gcode |
 |------|:---:|:---:|
-21→| 二进制名 | `grok` / `gork` | `gcode` |
+| 二进制名 | `grok` / `gork` | `gcode` |
 | xAI 登录 | 必需 | **可选**（多供应商模式） |
 | 模型支持 | xAI Grok | **OpenAI · DeepSeek · Anthropic · Kimi 等** |
 | 自动构建 | 无 | **每次 push 自动 CI 构建 + 发布** |
@@ -30,7 +30,7 @@
 
 ### 核心增强
 
-30→- **无需 xAI 登录**：内置多供应商桥接，直接用 OpenAI / DeepSeek / Anthropic 等账号即可使用。
+- **无需 xAI 登录**：内置多供应商桥接，直接用 OpenAI / DeepSeek / Anthropic 等账号即可使用。
 - **自动 CI/CD**：push 到 `main` 自动构建 macOS ARM64 + Linux x86_64，发布到 GitHub Releases。
 - **预置模型配置**：内置 PI 模型导入工具，`gcode models` 即可查看所有可用模型。
 - **上游友好**：改动集中在一只手能数过来的文件中，合并上游更新时冲突极少。
@@ -39,7 +39,7 @@
 
 **Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
 full-screen TUI that understands your codebase, edits files, executes shell
-40→commands, searches the web, and manages long-running tasks — interactively,
+commands, searches the web, and manages long-running tasks — interactively,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
@@ -51,7 +51,7 @@ Protocol (ACP).
 [Contributing](#contributing) ·
 [License](#license)
 
-50→
+
 ![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
 
 **Learn more about the original Grok Build at [x.ai/cli](https://x.ai/cli)**
