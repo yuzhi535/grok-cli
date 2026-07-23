@@ -28,7 +28,7 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.js
 pub fn default_grok_home() -> PathBuf {
     #[allow(deprecated)]
     let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    dunce::canonicalize(&home).unwrap_or(home).join(".gork")
+    dunce::canonicalize(&home).unwrap_or(home).join(".gcode")
 }
 
 /// Per-user config directory: `$GORK_HOME`, legacy `$GROK_HOME`, or `~/.gork`.
@@ -36,7 +36,7 @@ pub fn default_grok_home() -> PathBuf {
 pub fn grok_home() -> PathBuf {
     GROK_HOME
         .get_or_init(|| {
-            let grok_home = if let Ok(v) = std::env::var("GORK_HOME") {
+            let grok_home = if let Ok(v) = std::env::var("GCODE_HOME") {
                 PathBuf::from(v)
             } else if let Ok(v) = std::env::var("GROK_HOME") {
                 PathBuf::from(v)
@@ -56,7 +56,7 @@ pub fn grok_home() -> PathBuf {
 /// mistake a project's `.grok` tree for the user-global one when no home resolves.
 pub fn user_grok_home() -> Option<PathBuf> {
     #[allow(deprecated)]
-    let resolvable = std::env::var_os("GORK_HOME").is_some()
+    let resolvable = std::env::var_os("GCODE_HOME").is_some()
         || std::env::var_os("GROK_HOME").is_some()
         || std::env::home_dir().is_some();
     resolvable.then(grok_home)
@@ -69,14 +69,14 @@ pub fn grok_application() -> PathBuf {
 
 /// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    let name = if cfg!(windows) { "grok.exe" } else { "grok" };
+    let name = if cfg!(windows) { "gcode.exe" } else { "gcode" };
     home.join("bin").join(name)
 }
 
 /// System-wide config directory: `/etc/grok/` on Unix, `None` on Windows.
 pub fn system_config_dir() -> Option<PathBuf> {
     if cfg!(unix) {
-        Some(PathBuf::from("/etc/grok"))
+        Some(PathBuf::from("/etc/gcode"))
     } else {
         None
     }
@@ -317,7 +317,7 @@ mod tests {
         // canonicalization must yield a plain path. No-op assertion on Unix.
         let home = default_grok_home();
         assert!(!home.to_string_lossy().starts_with(r"\\?\"));
-        assert!(home.ends_with(".gork"));
+        assert!(home.ends_with(".gcode"));
     }
 
     #[test]

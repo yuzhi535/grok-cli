@@ -29,9 +29,9 @@ const MSG_RUN_UPDATE_MANUAL: &str = "Run `grok update` to get the latest version
 /// Manual-install one-liner for this platform's bootstrap installer.
 fn manual_install_cmd() -> &'static str {
     if cfg!(windows) {
-        "irm https://github.com/yuzhi535/grok-cli/releases/latest/download/install.ps1 | iex"
+        "irm https://github.com/yuzhi535/gcode/releases/latest/download/install.ps1 | iex"
     } else {
-        "curl -fsSL https://github.com/yuzhi535/grok-cli/releases/latest/download/install.sh | bash"
+        "curl -fsSL https://github.com/yuzhi535/gcode/releases/latest/download/install.sh | bash"
     }
 }
 
@@ -39,7 +39,7 @@ fn manual_install_cmd() -> &'static str {
 fn reinstall_hint(installer: &str) -> String {
     match installer {
         "npm" => "Please reinstall via npm:\n  npm i -g @xai-official/grok".to_string(),
-        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo yuzhi535/grok-cli --pattern 'grok-*' --output grok && chmod +x grok".to_string(),
+        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo yuzhi535/gcode --pattern 'gcode-*' --output gcode && chmod +x gcode".to_string(),
         _ => format!("Please reinstall via:\n  {}", manual_install_cmd()),
     }
 }
