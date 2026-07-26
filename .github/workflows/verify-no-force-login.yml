@@ -1,0 +1,74 @@
+name: Verify no forced login
+
+# Ensures gcode never auto-forces interactive Grok/xAI login at startup.
+# Multi-provider mode opens the main TUI; /login and --force-login remain opt-in.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  no-force-login:
+    name: Unit tests (no forced login)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Rust toolchain version
+        id: rust-toolchain
+        run: |
+          CHANNEL=$(grep '^channel' rust-toolchain.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "no-force-login-v1"
+          key: xai-grok-pager-lib
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
+
+      - name: Run no-force-login unit tests
+        run: |
+          set -euo pipefail
+          # Auth startup contracts live in the pager ACP layer.
+          cargo test -p xai-grok-pager --lib \
+            startup_auth_ \
+            select_eager_auth_ \
+            startup_never_forces_login_without_flag \
+            unauthenticated_startup_contract_skips_login \
+            -- --nocapture
+
+      - name: Assert test names still cover the contract
+        run: |
+          set -euo pipefail
+          # Guard against accidental renames that would make the cargo test
+          # filter above pass vacuously (zero matching tests).
+          rg -n 'fn (startup_auth_|select_eager_auth_|startup_never_forces_login_without_flag|unauthenticated_startup_contract_skips_login)' \
+            crates/codegen/xai-grok-pager/src/acp/mod.rs
+          count=$(rg -c 'fn (startup_auth_|select_eager_auth_|startup_never_forces_login_without_flag|unauthenticated_startup_contract_skips_login)' \
+            crates/codegen/xai-grok-pager/src/acp/mod.rs | awk -F: '{s+=$2} END {print s+0}')
+          echo "Matched test/fn definitions: $count"
+          test "$count" -ge 10
