@@ -584,10 +584,9 @@ pub fn startup_auth_metadata(
 
 /// Find an interactive login method from the auth methods list.
 ///
-/// Used when eager auth (cached_token / API key) fails and we need to fall
-/// back to the welcome screen with a working login button. Scans the list
-/// for a `grok.com` or `oidc` method — these are the ones that can trigger
-/// a browser-based re-auth flow.
+/// Used when the user explicitly starts login (`/login` or `--force-login`).
+/// Scans the list for a `grok.com` or `oidc` method — these can trigger a
+/// browser-based re-auth flow. Never used to auto-force login at startup.
 pub fn find_interactive_login_method(
     auth_methods: &[acp::AuthMethod],
 ) -> (Option<String>, Option<acp::AuthMethodId>, AuthStartMode) {
@@ -618,16 +617,14 @@ pub fn find_interactive_login_method(
     }
 }
 
-/// Attempt eager auth; on failure fall back to the interactive login screen.
+/// Attempt non-interactive eager auth only. Never force the interactive login UI.
 ///
-/// Errors from `authenticate` are caught so the connection still succeeds.
-/// When `xai.api_key` was advertised, non-interactive credentials were
-/// available — do not promote to interactive auto-Login (shell owns
-/// unpinned fallthrough; a failed api_key must not open a browser). Otherwise
-/// hand the interactive method for the login screen.
+/// Multi-provider / unauthenticated starts open the main welcome screen. Interactive
+/// login remains available through `/login` and `--force-login`.
 ///
-/// Empty `auth_methods` (e.g. `preferred_method=api_key` with no key) is
-/// fail-closed: needs_login without an interactive method.
+/// - Empty `auth_methods`: proceed without login (no invented method, no splash).
+/// - No non-interactive method (`xai.api_key` / `cached_token`): skip authenticate.
+/// - Eager authenticate failure: proceed without login (do not open browser).
 ///
 /// Returns `(needs_login, login_label, login_method_id, auth_start_mode, auth_meta)`.
 async fn eager_auth_or_login_fallback(
@@ -645,47 +642,45 @@ async fn eager_auth_or_login_fallback(
     AuthStartMode,
     Option<serde_json::Value>,
 ) {
-    if auth_methods.is_empty() {
-        // preferred_method pin unavailable — fail closed, no invented method.
-        return (true, None, None, AuthStartMode::Pending, None);
-    }
+    // Only honor an explicit needs_login from the caller (currently always false
+    // from `startup_auth_metadata`). Never invent forced login from empty methods
+    // or failed eager auth.
     if needs_login {
         return (
-            needs_login,
+            true,
             login_label,
             login_method_id,
             auth_start_mode,
             None,
         );
     }
+
+    // No non-interactive credentials → open the main TUI without login.
+    if select_eager_auth_method(auth_methods, default_auth_method_id).is_none() {
+        return (false, login_label, login_method_id, auth_start_mode, None);
+    }
+
     match authenticate(tx, auth_methods, default_auth_method_id).await {
         Ok(meta) => (
-            needs_login,
+            false,
             login_label,
             login_method_id,
             auth_start_mode,
             meta,
         ),
         Err(_) => {
-            // Non-interactive credentials were advertised; shell fallthrough
-            // already preferred them — do not auto-open browser login.
-            let has_api_key = auth_methods
-                .iter()
-                .any(|m| AuthMethodKind::from_id(m.id()) == AuthMethodKind::XaiApiKey);
-            if has_api_key {
-                return (false, login_label, login_method_id, auth_start_mode, None);
-            }
-            let (label, method_id, mode) = find_interactive_login_method(auth_methods);
-            (true, label, method_id, mode, None)
+            // Failed non-interactive auth: stay on the main UI. Interactive
+            // login is opt-in (`/login`, `--force-login`), never auto-started.
+            (false, login_label, login_method_id, auth_start_mode, None)
         }
     }
 }
 
-/// Authenticate with the agent using the agent's chosen default method.
+/// Authenticate with the agent using a non-interactive eager method only.
 ///
-/// Prefer `defaultAuthMethodId` from initialize meta when present and listed.
-/// Do not re-derive api_key vs session ordering client-side (that has regressed
-/// OIDC refresh before). Legacy fallback: `cached_token` then first method.
+/// Prefer `defaultAuthMethodId` from initialize meta when present, listed, and
+/// non-interactive. Never selects `grok.com` / `oidc` for eager auth (those
+/// open a browser and would force login).
 ///
 /// Returns the response `meta` (contains `team_name`, etc.) so callers can
 /// propagate it to the UI.
@@ -695,7 +690,7 @@ async fn authenticate(
     default_auth_method_id: Option<&acp::AuthMethodId>,
 ) -> Result<Option<serde_json::Value>> {
     let method_id = select_eager_auth_method(auth_methods, default_auth_method_id)
-        .ok_or_else(|| anyhow::anyhow!("No auth methods available"))?;
+        .ok_or_else(|| anyhow::anyhow!("No non-interactive auth methods available"))?;
     crate::unified_log::info(
         "pager eager auth method selected",
         None,
@@ -715,23 +710,51 @@ async fn authenticate(
 
 /// Pick the method id for eager authenticate.
 ///
-/// 1. Agent's `defaultAuthMethodId` when present in the advertised list
-/// 2. Legacy: `cached_token` if advertised, else first method
+/// Eager auth is non-interactive only — never `grok.com` / `oidc` (those force
+/// a browser login). Selection order:
+/// 1. Agent's `defaultAuthMethodId` when present, listed, and non-interactive
+/// 2. `cached_token` if advertised
+/// 3. `xai.api_key` if advertised
+/// 4. `None` when only interactive methods (or nothing) are available
 pub fn select_eager_auth_method(
     auth_methods: &[acp::AuthMethod],
     default_auth_method_id: Option<&acp::AuthMethodId>,
 ) -> Option<acp::AuthMethodId> {
+    let is_non_interactive = |id: &acp::AuthMethodId| {
+        !AuthMethodKind::from_id(id).needs_interactive_login()
+    };
+
     if let Some(default_id) = default_auth_method_id
         && auth_methods.iter().any(|m| m.id() == default_id)
+        && is_non_interactive(default_id)
     {
         return Some(default_id.clone());
     }
-    let cached_token_method = auth_methods
+
+    auth_methods
         .iter()
-        .find(|m| AuthMethodKind::from_id(m.id()) == AuthMethodKind::CachedToken);
-    cached_token_method
-        .or_else(|| auth_methods.first())
+        .find(|m| AuthMethodKind::from_id(m.id()) == AuthMethodKind::CachedToken)
+        .or_else(|| {
+            auth_methods
+                .iter()
+                .find(|m| AuthMethodKind::from_id(m.id()) == AuthMethodKind::XaiApiKey)
+        })
         .map(|m| m.id().clone())
+}
+
+/// Pure decision: should startup auto-dispatch interactive login?
+///
+/// gcode never forces login from auth-method shape alone. Only an explicit
+/// `--force-login` (or a caller that already set `needs_login`) can do so.
+pub fn should_force_interactive_login_at_startup(
+    needs_login: bool,
+    force_login_flag: bool,
+    auth_methods_empty: bool,
+) -> bool {
+    if force_login_flag && !auth_methods_empty {
+        return true;
+    }
+    needs_login
 }
 
 #[cfg(test)]
@@ -937,6 +960,122 @@ mod tests {
         let methods = vec![make_auth_method("grok.com", "grok.com", Some(meta))];
         let (_, _, _, mode) = startup_auth_metadata(&methods);
         assert_eq!(mode, AuthStartMode::Pending);
+    }
+
+    // ── select_eager_auth_method / no forced login ─────────────────
+
+    #[test]
+    fn select_eager_auth_skips_interactive_only_methods() {
+        use xai_grok_shell::agent::auth_method::GROK_COM_METHOD_ID;
+
+        let methods = vec![make_auth_method(GROK_COM_METHOD_ID, "Grok", None)];
+        assert!(
+            select_eager_auth_method(&methods, None).is_none(),
+            "eager auth must not select grok.com — that would force browser login"
+        );
+    }
+
+    #[test]
+    fn select_eager_auth_skips_interactive_default_id() {
+        use xai_grok_shell::agent::auth_method::{GROK_COM_METHOD_ID, XAI_API_KEY_METHOD_ID};
+
+        let methods = vec![
+            make_auth_method(GROK_COM_METHOD_ID, "Grok", None),
+            make_auth_method(XAI_API_KEY_METHOD_ID, "xai.api_key", None),
+        ];
+        let interactive_default = acp::AuthMethodId::new(GROK_COM_METHOD_ID);
+        let selected = select_eager_auth_method(&methods, Some(&interactive_default));
+        assert_eq!(
+            selected.as_ref().map(|id| id.0.as_ref()),
+            Some(XAI_API_KEY_METHOD_ID),
+            "interactive defaultAuthMethodId must be ignored for eager auth"
+        );
+    }
+
+    #[test]
+    fn select_eager_auth_prefers_cached_token_over_api_key() {
+        use xai_grok_shell::agent::auth_method::{
+            CACHED_TOKEN_AUTH_METHOD_ID, XAI_API_KEY_METHOD_ID,
+        };
+
+        let methods = vec![
+            make_auth_method(XAI_API_KEY_METHOD_ID, "xai.api_key", None),
+            make_auth_method(CACHED_TOKEN_AUTH_METHOD_ID, "cached_token", None),
+        ];
+        let selected = select_eager_auth_method(&methods, None);
+        assert_eq!(
+            selected.as_ref().map(|id| id.0.as_ref()),
+            Some(CACHED_TOKEN_AUTH_METHOD_ID)
+        );
+    }
+
+    #[test]
+    fn select_eager_auth_honors_non_interactive_default() {
+        use xai_grok_shell::agent::auth_method::{
+            CACHED_TOKEN_AUTH_METHOD_ID, XAI_API_KEY_METHOD_ID,
+        };
+
+        let methods = vec![
+            make_auth_method(CACHED_TOKEN_AUTH_METHOD_ID, "cached_token", None),
+            make_auth_method(XAI_API_KEY_METHOD_ID, "xai.api_key", None),
+        ];
+        let default = acp::AuthMethodId::new(XAI_API_KEY_METHOD_ID);
+        let selected = select_eager_auth_method(&methods, Some(&default));
+        assert_eq!(
+            selected.as_ref().map(|id| id.0.as_ref()),
+            Some(XAI_API_KEY_METHOD_ID)
+        );
+    }
+
+    #[test]
+    fn select_eager_auth_empty_methods_is_none() {
+        assert!(select_eager_auth_method(&[], None).is_none());
+    }
+
+    #[test]
+    fn startup_never_forces_login_without_flag() {
+        // Fresh install: only grok.com advertised, no credentials.
+        assert!(
+            !should_force_interactive_login_at_startup(
+                /*needs_login=*/ false,
+                /*force_login_flag=*/ false,
+                /*auth_methods_empty=*/ false,
+            )
+        );
+        // preferred_method pin with empty methods — still no auto login splash.
+        assert!(
+            !should_force_interactive_login_at_startup(false, false, true)
+        );
+        // Explicit --force-login only works when methods exist.
+        assert!(should_force_interactive_login_at_startup(false, true, false));
+        assert!(!should_force_interactive_login_at_startup(false, true, true));
+    }
+
+    #[test]
+    fn unauthenticated_startup_contract_skips_login() {
+        use xai_grok_shell::agent::auth_method::{AuthMethodsBuildInputs, build_auth_methods};
+
+        // Shell shape for a fresh multi-provider user: no API key, no session.
+        let built = build_auth_methods(AuthMethodsBuildInputs {
+            has_external_api_key: false,
+            has_cached_token: false,
+            has_enterprise_oidc: false,
+            enterprise_oidc_issuer: None,
+            login_label: None,
+            has_auth_provider_command: false,
+            preferred_method: None,
+        });
+        let (needs, _, _, _) = startup_auth_metadata(&built.methods);
+        assert!(!needs, "startup metadata must not require login");
+        assert!(
+            select_eager_auth_method(&built.methods, built.default_auth_method_id.as_ref())
+                .is_none(),
+            "eager auth must not pick an interactive method for a fresh user"
+        );
+        assert!(
+            !should_force_interactive_login_at_startup(needs, false, built.methods.is_empty()),
+            "fresh start must open the main TUI without forced login"
+        );
     }
 
     // ── unsupported_leader_flags ──────────────────────────────────
