@@ -54,18 +54,29 @@ jobs:
         run: |
           set -euo pipefail
           # Auth startup contracts live in the pager ACP layer.
-          cargo test -p xai-grok-pager --lib \
-            startup_auth_ \
-            select_eager_auth_ \
-            startup_never_forces_login_without_flag \
-            unauthenticated_startup_contract_skips_login \
-            -- --nocapture
+          # libtest filters are substring matches (not regex), so run each
+          # family separately. The first invocation compiles; later ones reuse
+          # the binary.
+          filters=(
+            startup_auth_
+            select_eager_auth_
+            startup_never_forces_login_without_flag
+            unauthenticated_startup_contract_skips_login
+          )
+          for f in "${filters[@]}"; do
+            echo "::group::cargo test filter: $f"
+            cargo test -p xai-grok-pager --lib "$f" -- --nocapture
+            echo "::endgroup::"
+          done
 
       - name: Assert test names still cover the contract
         run: |
           set -euo pipefail
           # Guard against accidental renames that would make the cargo test
           # filter above pass vacuously (zero matching tests).
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y ripgrep
+          fi
           rg -n 'fn (startup_auth_|select_eager_auth_|startup_never_forces_login_without_flag|unauthenticated_startup_contract_skips_login)' \
             crates/codegen/xai-grok-pager/src/acp/mod.rs
           count=$(rg -c 'fn (startup_auth_|select_eager_auth_|startup_never_forces_login_without_flag|unauthenticated_startup_contract_skips_login)' \
