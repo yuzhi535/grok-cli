@@ -74,12 +74,11 @@ jobs:
           set -euo pipefail
           # Guard against accidental renames that would make the cargo test
           # filter above pass vacuously (zero matching tests).
-          if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y ripgrep
-          fi
-          rg -n 'fn (startup_auth_|select_eager_auth_|startup_never_forces_login_without_flag|unauthenticated_startup_contract_skips_login)' \
-            crates/codegen/xai-grok-pager/src/acp/mod.rs
-          count=$(rg -c 'fn (startup_auth_|select_eager_auth_|startup_never_forces_login_without_flag|unauthenticated_startup_contract_skips_login)' \
-            crates/codegen/xai-grok-pager/src/acp/mod.rs | awk -F: '{s+=$2} END {print s+0}')
+          # Prefer grep -E so we don't need to install ripgrep on the runner.
+          PATTERN='fn (startup_auth_|select_eager_auth_|startup_never_forces_login_without_flag|unauthenticated_startup_contract_skips_login)'
+          FILE=crates/codegen/xai-grok-pager/src/acp/mod.rs
+          matches=$(grep -nE "$PATTERN" "$FILE" || true)
+          echo "$matches"
+          count=$(printf '%s\n' "$matches" | grep -c . || true)
           echo "Matched test/fn definitions: $count"
           test "$count" -ge 10
