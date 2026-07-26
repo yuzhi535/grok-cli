@@ -14,7 +14,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: gork
+  BINARY_NAME: gcode
 
 jobs:
   build:
@@ -145,7 +145,7 @@ jobs:
 
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "gork ${GITHUB_REF_NAME}" \
+            --title "gcode ${GITHUB_REF_NAME}" \
             --notes "$(<release-notes.md)" \
             --generate-notes \
             "${files[@]}"
