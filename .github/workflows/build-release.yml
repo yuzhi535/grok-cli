@@ -204,7 +204,7 @@ jobs:
 
           gh release create "${tag}" \
             --repo "${{ github.repository }}" \
-            --title "gork ${tag}" \
+            --title "gcode ${tag}" \
             --notes-file release-notes.md \
             --prerelease \
             --target "${{ github.sha }}" \
