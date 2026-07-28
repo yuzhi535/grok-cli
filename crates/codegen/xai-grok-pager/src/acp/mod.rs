@@ -917,6 +917,7 @@ mod tests {
             enterprise_oidc_issuer: None,
             login_label: None,
             has_auth_provider_command: false,
+            has_openai_codex_provider: false,
             preferred_method: None,
         });
 
@@ -1063,6 +1064,7 @@ mod tests {
             enterprise_oidc_issuer: None,
             login_label: None,
             has_auth_provider_command: false,
+            has_openai_codex_provider: false,
             preferred_method: None,
         });
         let (needs, _, _, _) = startup_auth_metadata(&built.methods);

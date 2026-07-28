@@ -1715,6 +1715,9 @@ pub enum Effect {
         use_oauth: bool,
         force_interactive: bool,
     },
+    /// Run gcode's own ChatGPT/Codex OAuth login helper. This deliberately
+    /// bypasses the xAI ACP auth extensions used by `grok.com`.
+    OpenAICodexLogin { request_seq: u64 },
     /// Poll for auth URL from the agent (ext request).
     PollAuthUrl { request_seq: u64 },
     /// Submit a manually-pasted auth code (ext request).

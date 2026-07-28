@@ -94,6 +94,8 @@ pub struct AuthMethodsBuildInputs<'a> {
     /// True if `grok_com_config.auth_provider_command` is configured (sets
     /// `meta.external_provider = true` on the `grok.com` method).
     pub has_auth_provider_command: bool,
+    /// True when a configured model uses gcode's ChatGPT/Codex provider.
+    pub has_openai_codex_provider: bool,
     /// Config pin (`[auth] preferred_method`). `None` keeps multi-method
     /// fallthrough; `Some` is fail-closed (only that method family).
     pub preferred_method: Option<PreferredAuthMethod>,
@@ -144,8 +146,16 @@ pub fn build_auth_methods(inputs: AuthMethodsBuildInputs<'_>) -> BuiltAuthMethod
         enterprise_oidc_issuer,
         login_label,
         has_auth_provider_command,
+        has_openai_codex_provider,
         preferred_method,
     } = inputs;
+
+    if has_openai_codex_provider {
+        return BuiltAuthMethods {
+            methods: vec![openai_codex_auth_method()],
+            default_auth_method_id: None,
+        };
+    }
 
     match preferred_method {
         Some(PreferredAuthMethod::ApiKey) => build_pinned_api_key(has_external_api_key),
@@ -291,6 +301,7 @@ pub enum AuthMethodKind {
     CachedToken,
     GrokCom,
     Oidc,
+    OpenAiCodex,
     Unknown,
 }
 
@@ -301,6 +312,7 @@ impl AuthMethodKind {
             CACHED_TOKEN_AUTH_METHOD_ID => Self::CachedToken,
             GROK_COM_METHOD_ID => Self::GrokCom,
             OIDC_METHOD_ID => Self::Oidc,
+            OPENAI_CODEX_METHOD_ID => Self::OpenAiCodex,
             _ => Self::Unknown,
         }
     }
@@ -317,7 +329,7 @@ impl AuthMethodKind {
 
     /// Requires user interaction (browser, OIDC redirect, or external auth command).
     pub fn needs_interactive_login(self) -> bool {
-        matches!(self, Self::GrokCom | Self::Oidc)
+        matches!(self, Self::GrokCom | Self::Oidc | Self::OpenAiCodex)
     }
 
     pub fn auth_error_message(self) -> &'static str {
@@ -448,6 +460,23 @@ pub fn cached_token_auth_method() -> acp::AuthMethod {
 
 pub const GROK_COM_METHOD_ID: &str = "grok.com";
 
+pub const OPENAI_CODEX_METHOD_ID: &str = "openai-codex";
+
+/// gcode-owned ChatGPT/Codex subscription login. The pager handles this
+/// method locally instead of sending it through xAI ACP auth extensions.
+pub fn openai_codex_auth_method() -> acp::AuthMethod {
+    let mut meta = acp::Meta::new();
+    meta.insert("external_provider".to_owned(), serde_json::json!(true));
+    acp::AuthMethod::Agent(
+        acp::AuthMethodAgent::new(
+            acp::AuthMethodId::new(OPENAI_CODEX_METHOD_ID),
+            "ChatGPT (gcode)".to_string(),
+        )
+        .description(Some("Sign in with your ChatGPT subscription".to_string()))
+        .meta(Some(meta)),
+    )
+}
+
 /// xAI OAuth2/OIDC auth. Method id `"grok.com"` kept for ACP wire-compat.
 pub fn grok_com_auth_method(
     label: Option<&str>,
@@ -567,6 +596,7 @@ mod tests {
             enterprise_oidc_issuer: None,
             login_label: None,
             has_auth_provider_command: false,
+            has_openai_codex_provider: false,
             preferred_method: None,
         }
     }
@@ -747,6 +777,18 @@ mod tests {
             meta.get("external_provider").and_then(|v| v.as_bool()),
             Some(true),
         );
+    }
+
+    #[test]
+    fn openai_codex_provider_selects_gcode_owned_login() {
+        let built = build_auth_methods(AuthMethodsBuildInputs {
+            has_openai_codex_provider: true,
+            ..default_inputs()
+        });
+        assert_eq!(method_ids(&built), vec![OPENAI_CODEX_METHOD_ID]);
+        assert_eq!(default_id(&built), None);
+        assert!(AuthMethodKind::from_id(&built.methods[0].id()).needs_interactive_login());
+        assert_eq!(built.methods[0].name(), "ChatGPT (gcode)");
     }
 
     // ── End-to-end: enterprise TOML -> resolved models -> build_auth_methods ─

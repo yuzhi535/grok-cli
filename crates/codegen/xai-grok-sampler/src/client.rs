@@ -29,6 +29,10 @@ use xai_grok_sampling_types::{
 };
 
 use crate::config::{AuthScheme, OriginClientInfo, SamplerConfig};
+use crate::openai_codex::{
+    adapt_codex_response_body, inject_codex_headers, is_openai_codex_base_url,
+    resolve_codex_responses_url,
+};
 
 // Re-export ApiBackend from the shared types crate for downstream callers.
 pub use xai_grok_sampling_types::ApiBackend;
@@ -593,6 +597,23 @@ impl SamplingClient {
         if let Some(injector) = &self.header_injector {
             injector.inject(&mut headers);
         }
+        // PI openai-codex-responses: chatgpt-account-id + originator + OpenAI-Beta.
+        // Re-applied per request so a live bearer_resolver refresh keeps account-id
+        // in sync with the JWT on the wire.
+        if is_openai_codex_base_url(&self.base_url) {
+            let bearer = self
+                .bearer_resolver
+                .as_ref()
+                .and_then(|r| r.current_bearer())
+                .or_else(|| {
+                    headers
+                        .get(AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.strip_prefix("Bearer "))
+                        .map(str::to_owned)
+                });
+            inject_codex_headers(&mut headers, bearer.as_deref());
+        }
         self.http.post(url).headers(headers)
     }
 
@@ -701,8 +722,14 @@ impl SamplingClient {
     }
 
     fn endpoint(&self, path: &str) -> String {
-        let base = self.base_url.trim_end_matches('/');
         let path = path.trim_start_matches('/');
+        // PI resolveCodexUrl: ChatGPT OAuth uses /codex/responses, not /responses.
+        if path == "responses"
+            && let Some(url) = resolve_codex_responses_url(&self.base_url)
+        {
+            return url;
+        }
+        let base = self.base_url.trim_end_matches('/');
         format!("{base}/{path}")
     }
 
@@ -1063,6 +1090,9 @@ impl SamplingClient {
         // it in post-serialize. This is the last surviving piece of the
         // old raw_output machinery.
         xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
+        if is_openai_codex_base_url(&self.base_url) {
+            adapt_codex_response_body(&mut request_body);
+        }
         let http_request = grok_headers
             .apply(self.post(self.endpoint("responses")))
             .json(&request_body);
@@ -1199,6 +1229,9 @@ impl SamplingClient {
             }
         }
         xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
+        if is_openai_codex_base_url(&self.base_url) {
+            adapt_codex_response_body(&mut request_body);
+        }
         // Fresh per attempt so signals never leak across retries; `None`
         // (check disabled) sends no header and does no peek work per event.
         let doom_loop = self
@@ -2067,6 +2100,65 @@ mod tests {
     fn new_with_minimal_config_succeeds() {
         let client = SamplingClient::new(minimal_config()).expect("client should construct");
         assert_eq!(client.api_backend(), ApiBackend::ChatCompletions);
+    }
+
+    #[test]
+    fn endpoint_rewrites_chatgpt_backend_to_codex_responses() {
+        let mut cfg = minimal_config();
+        cfg.base_url = "https://chatgpt.com/backend-api".into();
+        cfg.api_backend = ApiBackend::Responses;
+        let client = SamplingClient::new(cfg).expect("client");
+        assert_eq!(
+            client.endpoint("responses"),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
+        assert_eq!(
+            client.endpoint("chat/completions"),
+            "https://chatgpt.com/backend-api/chat/completions"
+        );
+    }
+
+    #[test]
+    fn endpoint_leaves_platform_openai_unchanged() {
+        let mut cfg = minimal_config();
+        cfg.base_url = "https://api.openai.com/v1".into();
+        cfg.api_backend = ApiBackend::Responses;
+        let client = SamplingClient::new(cfg).expect("client");
+        assert_eq!(
+            client.endpoint("responses"),
+            "https://api.openai.com/v1/responses"
+        );
+    }
+
+    #[test]
+    fn codex_post_derives_account_id_from_full_authorization_token() {
+        let token = "header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xMjMifX0.sig";
+        let cfg = SamplerConfig {
+            api_key: Some(token.to_owned()),
+            base_url: "https://chatgpt.com/backend-api".to_owned(),
+            api_backend: ApiBackend::Responses,
+            ..minimal_config()
+        };
+        let client = SamplingClient::new(cfg).expect("client");
+        let request = client
+            .post("https://chatgpt.com/backend-api/codex/responses")
+            .build()
+            .expect("request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("chatgpt-account-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("acct-123")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("originator")
+                .and_then(|value| value.to_str().ok()),
+            Some("gcode")
+        );
     }
 
     #[test]

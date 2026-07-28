@@ -23,7 +23,7 @@
 |------|:---:|:---:|
 | 二进制名 | `grok` / `gork` | `gcode` |
 | xAI 登录 | 必需 | **可选**（多供应商模式） |
-| 模型支持 | xAI Grok | **OpenAI · DeepSeek · Anthropic · Kimi 等** |
+| 模型支持 | xAI Grok | **OpenAI Codex OAuth · DeepSeek · Anthropic · Kimi 等** |
 | 自动构建 | 无 | **每次 push 自动 CI 构建 + 发布** |
 | 开箱配置 | 需自行配置 | **预置多供应商 config** |
 | 上游合并 | — | 最小改动策略，便于追踪上游 |
@@ -31,9 +31,36 @@
 ### 核心增强
 
 - **无需 xAI 登录**：内置多供应商桥接，直接用 OpenAI / DeepSeek / Anthropic 等账号即可使用。
+- **ChatGPT / Codex OAuth（对齐 PI）**：走 `chatgpt.com/backend-api/codex/responses`，自动读 Codex CLI / PI / OpenCode 本地登录态并刷新 token。
 - **自动 CI/CD**：push 到 `main` 自动构建 macOS ARM64 + Linux x86_64，发布到 GitHub Releases。
 - **预置模型配置**：内置 PI 模型导入工具，`gcode models` 即可查看所有可用模型。
 - **上游友好**：改动集中在一只手能数过来的文件中，合并上游更新时冲突极少。
+
+### 使用 ChatGPT 订阅（OpenAI Codex OAuth）
+
+与 PI 相同路径，不需要 Platform API Key：
+
+1. 用任一工具完成 ChatGPT 登录（任选其一即可）：
+   - `codex login`
+   - PI 的 OpenAI Codex 登录
+   - `opencode auth login`（OpenAI OAuth）
+2. 导入模型并安装凭证 helper：
+
+```sh
+node scripts/import-pi-models.mjs
+# 会写入 ~/.gcode/config.toml，并安装 ~/.gcode/bin/gcode-openai-codex-auth
+```
+
+3. 启动 `gcode`，选择 `pi-openai-codex-*` 模型（默认会跟 PI 的 default 对齐）。
+
+运行时行为（从 PI 抄过来）：
+
+| 项目 | 行为 |
+|------|------|
+| 端点 | `https://chatgpt.com/backend-api/codex/responses` |
+| 鉴权 | `Authorization: Bearer <oauth access>` |
+| 账号头 | JWT 里的 `chatgpt_account_id` → `chatgpt-account-id` |
+| 其它头 | `OpenAI-Beta: responses=experimental`，`originator: gcode` |
 
 ---
 

@@ -83,6 +83,12 @@ impl From<AuthProviderRef> for AuthProviderRefData {
 }
 
 impl AuthProviderRef {
+    /// Stable provider name used by the pager to select a provider-owned
+    /// interactive login flow.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Production uses `unresolved` + `attach_trusted_config`.
     #[cfg(test)]
     pub(crate) fn new(name: String, config: AuthProviderConfig) -> Self {

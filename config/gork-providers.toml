@@ -1,9 +1,10 @@
-# Managed by the local gork provider bridge. Keep credentials in environment
-# variables or OpenCode's auth store; do not put secrets in this file.
+# Managed by the local gcode multi-provider bridge. Keep credentials in
+# environment variables, auth_provider helpers, or OpenCode/Codex/PI auth
+# stores — do not put secrets in this file.
 
 [endpoints]
-# This is the dynamic model catalog. Every current OpenRouter text model is
-# available in `gork models` without static entries here.
+# Optional dynamic catalog (OpenRouter). Per-model base_url entries below
+# always take precedence for those models.
 models_base_url = "https://openrouter.ai/api/v1"
 
 # This distribution is a multi-provider client. Do not require a Grok/xAI
@@ -22,16 +23,41 @@ auto_update = false
 # definitions above and their own provider endpoints remain available.
 remote_fetch = false
 
-[models]
-default = "openai-oauth-gpt-5.4"
+# ChatGPT / Codex OAuth — same client_id + refresh flow as PI.
+# Helper reads ~/.codex/auth.json, ~/.pi/agent/auth.json, OpenCode auth.json.
+[auth_provider.openai-codex]
+command = "$HOME/.gcode/bin/gcode-openai-codex-auth"
+token_ttl_secs = 3600
+timeout_secs = 30
 
-[model."openai-oauth-gpt-5.4"]
+[models]
+default = "openai-codex-gpt-5.4"
+
+# PI openai-codex-responses: base is chatgpt.com/backend-api; the sampler
+# rewrites the path to /codex/responses and injects chatgpt-account-id.
+[model."openai-codex-gpt-5.4"]
 model = "gpt-5.4"
-base_url = "https://api.openai.com/v1"
+base_url = "https://chatgpt.com/backend-api"
 api_backend = "responses"
-env_key = "GORK_OPENAI_OAUTH_ACCESS_TOKEN"
-name = "OpenAI GPT-5.4 (OpenCode OAuth)"
-context_window = 400000
+auth_provider = "openai-codex"
+name = "OpenAI GPT-5.4 (ChatGPT OAuth)"
+context_window = 272000
+
+[model."openai-codex-gpt-5.4-mini"]
+model = "gpt-5.4-mini"
+base_url = "https://chatgpt.com/backend-api"
+api_backend = "responses"
+auth_provider = "openai-codex"
+name = "OpenAI GPT-5.4 mini (ChatGPT OAuth)"
+context_window = 272000
+
+[model."openai-codex-gpt-5.6-terra"]
+model = "gpt-5.6-terra"
+base_url = "https://chatgpt.com/backend-api"
+api_backend = "responses"
+auth_provider = "openai-codex"
+name = "OpenAI GPT-5.6 Terra (ChatGPT OAuth)"
+context_window = 272000
 
 # Anthropic remains available when ANTHROPIC_API_KEY is set, but is not the
 # default provider. Change `model` when you choose a Claude version.

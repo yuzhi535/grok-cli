@@ -1,35 +1,42 @@
 #!/bin/zsh
-# Launch gork with credentials kept in OpenCode's local credential store.
+# Launch gcode with multi-provider credentials.
+# - OpenAI Codex / ChatGPT OAuth is handled in-process via
+#   [auth_provider.openai-codex] (see scripts/gcode-openai-codex-auth).
+# - Optional OpenCode/OpenRouter keys are still exported when present.
 set -euo pipefail
 
 auth_file="${OPENCODE_AUTH_FILE:-$HOME/.local/share/opencode/auth.json}"
-binary="${GORK_BINARY:-$HOME/.local/share/gork/gork-bin}"
+binary="${GCODE_BINARY:-${GORK_BINARY:-$HOME/.local/bin/gcode}}"
 # Keep this fork's config and runtime state separate from the original Grok CLI.
-export GROK_HOME="${GROK_HOME:-$HOME/.gork}"
+export GCODE_HOME="${GCODE_HOME:-${GROK_HOME:-$HOME/.gcode}}"
+export GROK_HOME="${GROK_HOME:-$GCODE_HOME}"
 
 if [[ ! -x "$binary" ]]; then
-  print -u2 "gork: managed binary not found at $binary"
-  exit 1
+  # Fall back to a cargo-built binary in the repo when developing.
+  if [[ -x "${0:A:h}/../target/release/gcode" ]]; then
+    binary="${0:A:h}/../target/release/gcode"
+  elif [[ -x "${0:A:h}/../target/debug/gcode" ]]; then
+    binary="${0:A:h}/../target/debug/gcode"
+  else
+    print -u2 "gcode: binary not found at $binary"
+    exit 1
+  fi
 fi
 
-# OpenCode credentials are an optional convenience source.  A missing or
-# expired OpenCode login must not prevent models backed by their own variables
-# (for example DEEPSEEK_API_KEY) from starting.
-if [[ -r "$auth_file" ]] && command -v jq >/dev/null 2>&1; then
-  openai_token="$(jq -er '.openai.access // empty' "$auth_file" 2>/dev/null || true)"
-  openai_expires="$(jq -er '.openai.expires // 0' "$auth_file" 2>/dev/null || true)"
-  openrouter_key="$(jq -er '.openrouter.key // empty' "$auth_file" 2>/dev/null || true)"
-
-  # OpenCode stores OAuth expiry as Unix milliseconds. Only expose a token
-  # while it is valid; OpenCode remains responsible for refreshing it.
-  if [[ "$openai_expires" =~ '^[0-9]+$' ]] && (( openai_expires > 1000000000000 )); then
-    now_ms=$(( $(date +%s) * 1000 ))
-    if (( openai_expires <= now_ms )); then
-      openai_token=""
-    fi
+# Ensure the Codex OAuth helper is on disk for [auth_provider.openai-codex].
+helper_src="${0:A:h}/gcode-openai-codex-auth"
+helper_dst="$GCODE_HOME/bin/gcode-openai-codex-auth"
+if [[ -r "$helper_src" ]]; then
+  mkdir -p "$GCODE_HOME/bin"
+  if [[ ! -x "$helper_dst" ]] || ! cmp -s "$helper_src" "$helper_dst" 2>/dev/null; then
+    cp "$helper_src" "$helper_dst"
+    chmod 755 "$helper_dst"
   fi
+fi
 
-  [[ -n "$openai_token" ]] && export GORK_OPENAI_OAUTH_ACCESS_TOKEN="$openai_token"
+# Optional convenience: surface OpenRouter / OpenCode keys for non-Codex models.
+if [[ -r "$auth_file" ]] && command -v jq >/dev/null 2>&1; then
+  openrouter_key="$(jq -er '.openrouter.key // empty' "$auth_file" 2>/dev/null || true)"
   [[ -n "$openrouter_key" ]] && export XAI_API_KEY="$openrouter_key"
 fi
 

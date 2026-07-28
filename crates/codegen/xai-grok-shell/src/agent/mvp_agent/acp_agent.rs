@@ -355,6 +355,15 @@ impl acp::Agent for MvpAgent {
                 issuer,
             )
         };
+        let has_openai_codex_provider = self
+            .models_manager
+            .models()
+            .values()
+            .any(|model| {
+                model
+                    .effective_auth_provider()
+                    .is_some_and(|provider| provider.name() == "openai-codex")
+            });
         if has_enterprise_oidc {
             let issuer = enterprise_oidc_issuer
                 .as_deref()
@@ -393,6 +402,7 @@ impl acp::Agent for MvpAgent {
             enterprise_oidc_issuer: enterprise_oidc_issuer.as_deref(),
             login_label: login_label.as_deref(),
             has_auth_provider_command: has_auth_provider,
+            has_openai_codex_provider,
             preferred_method,
         });
         let auth_methods = built.methods;
