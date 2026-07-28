@@ -106,6 +106,12 @@ pub(super) fn dispatch_switch_account(app: &mut AppView) -> Vec<Effect> {
         mode: app.auth_start_mode,
     };
 
+    if method_id.0.as_ref()
+        == xai_grok_shell::agent::auth_method::OPENAI_CODEX_METHOD_ID
+    {
+        return vec![Effect::OpenAICodexLogin { request_seq }];
+    }
+
     vec![
         Effect::SwitchAccount {
             request_seq,

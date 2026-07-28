@@ -788,6 +788,48 @@ pub(super) async fn send_authenticate(
         }
     }
 }
+
+/// Run the gcode-owned ChatGPT OAuth helper. The helper owns the browser PKCE
+/// flow and persists only `GCODE_HOME/auth.json`; the pager only observes the
+/// exit status and never receives credentials on its protocol channel.
+pub(super) async fn run_openai_codex_login(request_seq: u64) -> TaskResult {
+    let command = std::env::var_os("GCODE_OPENAI_CODEX_AUTH_COMMAND")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            xai_grok_shell::util::grok_home::grok_home()
+                .join("bin")
+                .join("gcode-openai-codex-auth")
+        });
+    let result = tokio::process::Command::new(&command)
+        .arg("--login")
+        .kill_on_drop(true)
+        .output()
+        .await;
+    match result {
+        Ok(output) if output.status.success() => TaskResult::AuthComplete {
+            request_seq,
+            meta: None,
+        },
+        Ok(output) => {
+            let status = output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string());
+            TaskResult::AuthFailed {
+                request_seq,
+                error: format!("ChatGPT login failed (helper exit: {status})"),
+            }
+        }
+        Err(error) => TaskResult::AuthFailed {
+            request_seq,
+            error: format!(
+                "ChatGPT login helper unavailable: {}",
+                sanitize_user_error(&error.to_string())
+            ),
+        },
+    }
+}
 /// Translate a settings-registry key + value into the matching shell
 /// helper call. Type mismatches return an error (not panic) so a
 /// spawned task doesn't crash the pager. Unknown keys also return

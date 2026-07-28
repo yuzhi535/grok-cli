@@ -2035,6 +2035,12 @@ pub(crate) fn execute(
                 });
             meta.auth_abort_handle = Some((request_seq, abort_handle));
         }
+        Effect::OpenAICodexLogin { request_seq } => {
+            let abort_handle = tasks.spawn(async move {
+                run_openai_codex_login(request_seq).await
+            });
+            meta.auth_abort_handle = Some((request_seq, abort_handle));
+        }
         Effect::PollAuthUrl { request_seq } => {
             let tx = acp_tx.clone();
             let abort_handle = tasks

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { collectModels, removeLegacyPiModelBlocks, renderImportBlock, replaceImportBlock } from "./import-pi-models.mjs";
+import {
+  applyModelsDefault,
+  collectModels,
+  removeLegacyPiModelBlocks,
+  renderImportBlock,
+  replaceImportBlock,
+  resolveDefaultModelKey,
+} from "./import-pi-models.mjs";
 
 const models = {
   providers: {
@@ -21,16 +28,56 @@ const models = {
 
 test("imports PI protocol metadata into gork model configuration", () => {
   const records = collectModels(models, {
-    codex: { models: [{ id: "codex-fixture", name: "Codex Fixture", api: "openai-codex-responses", baseUrl: "https://codex.example/v1" }] },
+    "openai-codex": {
+      models: [
+        {
+          id: "codex-fixture",
+          name: "Codex Fixture",
+          api: "openai-codex-responses",
+          baseUrl: "https://chatgpt.com/backend-api",
+          provider: "openai-codex",
+        },
+      ],
+    },
   });
-  const block = renderImportBlock(records, { defaultProvider: "openai", defaultModel: "gpt-fixture" });
+  const block = renderImportBlock(
+    records,
+    { defaultProvider: "openai", defaultModel: "gpt-fixture" },
+    { helperPath: "/tmp/gcode-openai-codex-auth" },
+  );
 
   assert.match(block, /api_backend = "chat_completions"/);
   assert.doesNotMatch(block, /auth_scheme/);
-  assert.match(block, /api_backend = "chat_completions"/);
   assert.match(block, /api_backend = "responses"/);
-  assert.match(block, /\[models\]\ndefault = "pi-openai-gpt-fixture"/);
+  // Import block must NOT emit a second [models] table (duplicate-key crash).
+  assert.doesNotMatch(block, /\[models\]/);
   assert.match(block, /api_key = "fixture-secret-must-not-appear-in-output"/);
+  // Codex OAuth: no static key; auth_provider + chatgpt base URL like PI.
+  assert.match(block, /auth_provider = "openai-codex"/);
+  assert.match(block, /base_url = "https:\/\/chatgpt\.com\/backend-api"/);
+  assert.match(block, /\[auth_provider\.openai-codex\]/);
+  assert.match(block, /command = "\/tmp\/gcode-openai-codex-auth"/);
+  assert.doesNotMatch(block, /api_key = ".*codex/i);
+
+  assert.equal(
+    resolveDefaultModelKey(records, { defaultProvider: "openai", defaultModel: "gpt-fixture" }),
+    "pi-openai-gpt-fixture",
+  );
+});
+
+test("applyModelsDefault updates existing [models] without duplicating the table", () => {
+  const existing = `[models]\ndefault = "old"\ndefault_reasoning_effort = "high"\n\n[ui]\ntheme = "dark"\n\n# >>> gork: pi-model-import begin\nmodels\n# <<< gork: pi-model-import end\n`;
+  const output = applyModelsDefault(existing, "pi-openai-codex-gpt-5-6-terra");
+  assert.match(output, /\[models\]\ndefault = "pi-openai-codex-gpt-5-6-terra"\ndefault_reasoning_effort = "high"/);
+  assert.equal((output.match(/^\[models\]/gm) ?? []).length, 1);
+  assert.match(output, /\[ui\]/);
+});
+
+test("applyModelsDefault inserts [models] when missing", () => {
+  const existing = `[ui]\ntheme = "dark"\n\n# >>> gork: pi-model-import begin\nx\n# <<< gork: pi-model-import end\n`;
+  const output = applyModelsDefault(existing, "pi-new");
+  assert.match(output, /\[models\]\ndefault = "pi-new"\n\n# >>> gork: pi-model-import begin/);
+  assert.equal((output.match(/^\[models\]/gm) ?? []).length, 1);
 });
 
 test("converts Friday Anthropic endpoints to the OpenAI-compatible endpoint", () => {

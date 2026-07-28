@@ -22,6 +22,17 @@ The compatibility mode deliberately retains PI's original URL and model ID.
 Those values cannot be safely inferred from a differently configured provider;
 the selected endpoints are expected to accept OpenAI Chat Completions.
 
+**OpenAI Codex (ChatGPT OAuth)** models (`api = openai-codex-responses`,
+provider `openai-codex`) are special-cased to match PI's runtime:
+
+- `base_url` stays `https://chatgpt.com/backend-api` (sampler rewrites the
+  path to `/codex/responses`, injects `chatgpt-account-id` from the JWT, and
+  sets `OpenAI-Beta: responses=experimental` / `originator: gcode`)
+- models get `auth_provider = "openai-codex"` instead of a static API key
+- the importer installs `scripts/gcode-openai-codex-auth` into
+  `$GCODE_HOME/bin` and emits a matching `[auth_provider.openai-codex]`
+  table (same OAuth client id + refresh flow as PI / Codex CLI)
+
 It preserves model identifiers, display names, base URLs, context limits,
 completion limits, and available API keys. API keys are written only to the
 local target config, never printed, checked into Git, or placed in test data.

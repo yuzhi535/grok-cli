@@ -1,0 +1,392 @@
+#!/usr/bin/env node
+/**
+ * Credential helper and login flow for ChatGPT / OpenAI Codex OAuth.
+ *
+ * gcode owns the credential store at `$GCODE_HOME/auth.json`; it never reads
+ * or writes PI, Codex CLI, or OpenCode auth files. The normal helper refreshes
+ * the access token when near expiry and prints an auth_provider payload:
+ *
+ *   { "access_token": "...", "expires_in": 3600, "refresh_token": "..." }
+ *
+ * `--login` runs the browser PKCE flow and stores the resulting credentials.
+ * Wire the helper with:
+ *
+ *   [auth_provider.openai-codex]
+ *   command = "…/scripts/gcode-openai-codex-auth"
+ *
+ *   [model.my-codex]
+ *   auth_provider = "openai-codex"
+ *   base_url = "https://chatgpt.com/backend-api"
+ *   api_backend = "responses"
+ */
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { spawn } from "node:child_process";
+
+// This is the public OAuth client used by the Codex subscription flow.
+const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const AUTH_BASE_URL = "https://auth.openai.com";
+const AUTHORIZE_URL = `${AUTH_BASE_URL}/oauth/authorize`;
+const TOKEN_URL = "https://auth.openai.com/oauth/token";
+const REDIRECT_URI = "http://localhost:1455/auth/callback";
+const SCOPE = "openid profile email offline_access";
+const AUTH_FILE_NAME = "auth.json";
+// Re-mint a minute early so a turn never starts on a near-expired JWT.
+const SKEW_MS = 60_000;
+
+function readJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const parts = String(token).split(".");
+    if (parts.length !== 3) return null;
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = payload.length % 4 === 0 ? "" : "=".repeat(4 - (payload.length % 4));
+    return JSON.parse(Buffer.from(payload + pad, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function expMsFromJwt(token) {
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== "number") return null;
+  return payload.exp * 1000;
+}
+
+function gcodeHome() {
+  return process.env.GCODE_HOME || process.env.GORK_HOME || process.env.GROK_HOME || path.join(os.homedir(), ".gcode");
+}
+
+function authFile() {
+  return path.join(gcodeHome(), AUTH_FILE_NAME);
+}
+
+function authEntryFromTokens(tokens) {
+  return {
+    type: "oauth",
+    access: tokens.access,
+    refresh: tokens.refresh,
+    expires: tokens.expiresMs,
+  };
+}
+
+function writeOwnedStore(tokens) {
+  const file = authFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const data = readJson(file) || {};
+  data["openai-codex"] = authEntryFromTokens(tokens);
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // Best effort on filesystems without chmod support.
+  }
+}
+
+async function createPkce() {
+  const crypto = await import("node:crypto");
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  const challenge = crypto
+    .createHash("sha256")
+    .update(verifier)
+    .digest("base64url");
+  const state = crypto.randomBytes(16).toString("hex");
+  return { verifier, challenge, state };
+}
+
+function oauthHtml(title, message) {
+  return `<!doctype html><meta charset="utf-8"><title>${title}</title><style>body{font:16px system-ui;max-width:38rem;margin:4rem auto;padding:0 1rem}</style><h1>${title}</h1><p>${message}</p>`;
+}
+
+async function startOAuthServer(state) {
+  const http = await import("node:http");
+  let readyResolve;
+  const ready = new Promise((resolve) => {
+    readyResolve = resolve;
+  });
+  let codeResolve;
+  let codeReject;
+  const code = new Promise((resolve, reject) => {
+    codeResolve = resolve;
+    codeReject = reject;
+  });
+  let settled = false;
+  let server;
+  const finish = (value, error) => {
+    if (settled) return;
+    settled = true;
+    server?.close();
+    if (error) codeReject(error);
+    else codeResolve(value);
+  };
+  server = http.createServer((request, response) => {
+    try {
+      const url = new URL(request.url || "", "http://localhost");
+      if (url.pathname !== "/auth/callback") {
+        response.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(oauthHtml("gcode login", "Callback route not found."));
+        return;
+      }
+      if (url.searchParams.get("state") !== state) {
+        response.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(oauthHtml("gcode login failed", "State mismatch. You can close this window."));
+        return;
+      }
+      const error = url.searchParams.get("error");
+      if (error) {
+        response.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(oauthHtml("gcode login failed", "The authorization request was declined."));
+        finish(null, new Error(`OAuth authorization failed: ${error}`));
+        return;
+      }
+      const authorizationCode = url.searchParams.get("code");
+      if (!authorizationCode) {
+        response.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(oauthHtml("gcode login failed", "Authorization code missing."));
+        finish(null, new Error("OAuth callback did not contain an authorization code"));
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.end(oauthHtml("gcode login complete", "Authentication completed. You can close this window."));
+      finish(authorizationCode, null);
+    } catch (error) {
+      finish(null, error);
+    }
+  });
+  server.once("error", (error) => finish(null, error));
+  server.listen(1455, "127.0.0.1", () => readyResolve());
+  return {
+    ready,
+    code,
+    close() {
+      if (!settled) finish(null, new Error("OAuth login cancelled"));
+    },
+  };
+}
+
+/*
+ * The browser flow deliberately follows the same public OAuth contract as
+ * Codex, but the resulting credentials are written only to gcode's store.
+ */
+async function loginOwnedStore() {
+  const { verifier, challenge, state } = await createPkce();
+  const server = await startOAuthServer(state);
+  await server.ready;
+  const url = new URL(AUTHORIZE_URL);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("redirect_uri", REDIRECT_URI);
+  url.searchParams.set("scope", SCOPE);
+  url.searchParams.set("code_challenge", challenge);
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("state", state);
+  url.searchParams.set("id_token_add_organizations", "true");
+  url.searchParams.set("codex_cli_simplified_flow", "true");
+  url.searchParams.set("originator", "gcode");
+
+  process.stderr.write("gcode: opening ChatGPT login in the browser...\n");
+  process.stderr.write(`gcode: if it did not open, visit ${url}\n`);
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const openerArgs = process.platform === "win32" ? ["/c", "start", "", url.toString()] : [url.toString()];
+  const browser = spawn(opener, openerArgs, { stdio: "ignore", detached: true });
+  browser.unref();
+
+  try {
+    const code = await server.code;
+    const response = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: CLIENT_ID,
+        code,
+        code_verifier: verifier,
+        redirect_uri: REDIRECT_URI,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`OAuth token exchange failed (${response.status})`);
+    }
+    const json = await response.json();
+    if (!json?.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
+      throw new Error("OAuth token exchange returned an incomplete credential");
+    }
+    if (!decodeJwtPayload(json.access_token)?.["https://api.openai.com/auth"]?.chatgpt_account_id) {
+      throw new Error("OAuth token did not contain a ChatGPT account id");
+    }
+    writeOwnedStore({
+      access: json.access_token,
+      refresh: json.refresh_token,
+      expiresMs: Date.now() + json.expires_in * 1000,
+    });
+    process.stderr.write(`gcode: ChatGPT login saved to ${authFile()}\n`);
+  } finally {
+    server.close();
+  }
+}
+
+/**
+ * Load only gcode-owned credentials plus the provider handback. The handback
+ * is in-memory plumbing from the auth-provider refresher, not another durable
+ * auth store.
+ */
+function loadCandidates() {
+  const out = [];
+  const data = readJson(authFile());
+  const o = data?.["openai-codex"];
+  if (o?.access) {
+    out.push({
+      access: o.access,
+      refresh: o.refresh ?? null,
+      expiresMs: typeof o.expires === "number" ? o.expires : expMsFromJwt(o.access),
+      source: "gcode",
+      writeBack: { kind: "gcode", file: authFile(), data },
+    });
+  }
+
+  // Handback from gcode on re-mint. Never persist or inspect the value here.
+  {
+    const access = process.env.GROK_AUTH_PROVIDER_ACCESS_TOKEN;
+    const refresh = process.env.GROK_AUTH_PROVIDER_REFRESH_TOKEN;
+    const expiresAt = process.env.GROK_AUTH_PROVIDER_EXPIRES_AT;
+    if (access) {
+      let expiresMs = null;
+      if (expiresAt) {
+        const n = Number(expiresAt);
+        if (Number.isFinite(n)) {
+          expiresMs = n > 1e12 ? n : n * 1000;
+        } else {
+          const parsed = Date.parse(expiresAt);
+          if (!Number.isNaN(parsed)) expiresMs = parsed;
+        }
+      }
+      expiresMs = expiresMs ?? expMsFromJwt(access);
+      out.unshift({ access, refresh: refresh || null, expiresMs, source: "handback", writeBack: null });
+    }
+  }
+
+  return out;
+}
+
+function stillValid(expiresMs) {
+  if (expiresMs == null) return true; // unknown expiry: try it
+  return expiresMs - SKEW_MS > Date.now();
+}
+
+async function refreshAccessToken(refreshToken) {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: CLIENT_ID,
+  });
+  const response = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  if (!response.ok) {
+    throw new Error(`token refresh failed (${response.status})`);
+  }
+  const json = await response.json();
+  if (!json?.access_token || typeof json.expires_in !== "number") {
+    throw new Error("token refresh response missing required fields");
+  }
+  return {
+    access: json.access_token,
+    refresh: json.refresh_token || refreshToken,
+    expiresMs: Date.now() + json.expires_in * 1000,
+    expiresIn: json.expires_in,
+  };
+}
+
+function writeBack(candidate, tokens) {
+  if (!candidate.writeBack) return;
+  try {
+    if (candidate.writeBack.kind === "gcode") {
+      const data = readJson(candidate.writeBack.file) || {};
+      data["openai-codex"] = {
+        ...(data["openai-codex"] || {}),
+        type: "oauth",
+        access: tokens.access,
+        refresh: tokens.refresh,
+        expires: tokens.expiresMs,
+      };
+      fs.writeFileSync(candidate.writeBack.file, JSON.stringify(data, null, 2), { mode: 0o600 });
+      try {
+        fs.chmodSync(candidate.writeBack.file, 0o600);
+      } catch {
+        // Best effort on filesystems without chmod support.
+      }
+    }
+  } catch (err) {
+    // Non-fatal: gcode only needs stdout; durable stores are best-effort.
+    process.stderr.write(`gcode-openai-codex-auth: write-back failed: ${err}\n`);
+  }
+}
+
+function emit(access, expiresIn, refresh) {
+  const payload = { access_token: access };
+  if (typeof expiresIn === "number" && expiresIn > 0) payload.expires_in = expiresIn;
+  if (refresh) payload.refresh_token = refresh;
+  process.stdout.write(JSON.stringify(payload));
+}
+
+async function main() {
+  if (process.argv.includes("--login")) {
+    await loginOwnedStore();
+    return;
+  }
+
+  const candidates = loadCandidates();
+  if (candidates.length === 0) {
+    process.stderr.write(
+      "gcode-openai-codex-auth: no ChatGPT OAuth credentials found.\n" +
+        "  Run `/login` in gcode, or `gcode login`, to sign in.\n",
+    );
+    process.exit(1);
+  }
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    if (stillValid(candidate.expiresMs)) {
+      const expiresIn =
+        candidate.expiresMs != null
+          ? Math.max(1, Math.floor((candidate.expiresMs - Date.now()) / 1000))
+          : undefined;
+      emit(candidate.access, expiresIn, candidate.refresh);
+      return;
+    }
+    if (!candidate.refresh) {
+      lastError = new Error(`${candidate.source}: access expired and no refresh_token`);
+      continue;
+    }
+    try {
+      const tokens = await refreshAccessToken(candidate.refresh);
+      writeBack(candidate, tokens);
+      emit(tokens.access, tokens.expiresIn, tokens.refresh);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  process.stderr.write(
+    `gcode-openai-codex-auth: failed to mint token: ${lastError?.message || lastError}\n`,
+  );
+  process.exit(1);
+}
+
+main().catch((err) => {
+  process.stderr.write(`gcode-openai-codex-auth: ${err?.stack || err}\n`);
+  process.exit(1);
+});
