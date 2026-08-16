@@ -1,0 +1,149 @@
+name: Sync official upstream
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-official-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Prepare upstream sync PR
+    if: vars.UPSTREAM_SYNC_ENABLED == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require dedicated automation token
+        env:
+          UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo "::error::UPSTREAM_SYNC_TOKEN is missing. Use a dedicated fine-grained token; do not reuse a personal gh token."
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+      - name: Configure sync source
+        run: |
+          git config user.name "gcode-upstream-sync[bot]"
+          git config user.email "gcode-upstream-sync[bot]@users.noreply.github.com"
+          git remote add official https://github.com/xai-org/grok-build.git
+
+      - name: Prepare merge branch
+        id: sync
+        env:
+          SOURCE_REMOTE: official
+          SOURCE_BRANCH: main
+          TARGET_BRANCH: main
+          SYNC_BRANCH_PREFIX: automation/official-upstream
+          SYNC_COMMIT_PREFIX: "Sync official grok-build"
+          HARD_BLOCK_REGEX: '^\.github/(workflows|actions)/'
+          REVIEW_REGEX: '(^|/)(auth|oauth|sampler|acp|updater)(/|\.|$)|(^|/)paths\.rs$|xai-grok-home|xai-grok-pager-bin/Cargo\.toml'
+        run: bash scripts/github/prepare-branch-sync.sh
+
+      - name: Report no update
+        if: steps.sync.outputs.status == 'no_update'
+        run: echo "main already contains official upstream ${{ steps.sync.outputs.source_sha }}"
+
+      - name: Create or update blocked-sync issue
+        if: steps.sync.outputs.status == 'hard_block' || steps.sync.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          STATUS: ${{ steps.sync.outputs.status }}
+          SOURCE_SHA: ${{ steps.sync.outputs.source_sha }}
+          TARGET_SHA: ${{ steps.sync.outputs.target_sha }}
+          HARD_BLOCK_PATHS: ${{ steps.sync.outputs.hard_block_paths }}
+          CONFLICT_PATHS: ${{ steps.sync.outputs.conflict_paths }}
+        run: |
+          set -euo pipefail
+          gh label create upstream-sync --repo "$GITHUB_REPOSITORY" --color 1d76db --description "Automated upstream synchronization" --force
+          gh label create needs-manual-review --repo "$GITHUB_REPOSITORY" --color d93f0b --description "Automation stopped for manual review" --force
+
+          short_sha="${SOURCE_SHA:0:12}"
+          title="Official upstream sync blocked at ${short_sha}"
+          body_file="$RUNNER_TEMP/upstream-sync-issue.md"
+          {
+            echo "The official \`xai-org/grok-build\` update could not be safely proposed automatically."
+            echo
+            echo "- Status: \`${STATUS}\`"
+            echo "- Official upstream: \`${SOURCE_SHA}\`"
+            echo "- Current main: \`${TARGET_SHA}\`"
+            if [[ -n "$HARD_BLOCK_PATHS" ]]; then
+              echo
+              echo "Workflow/action files changed upstream. They were deliberately not pushed into this repository:"
+              echo '```text'
+              printf '%s\n' "$HARD_BLOCK_PATHS"
+              echo '```'
+            fi
+            if [[ -n "$CONFLICT_PATHS" ]]; then
+              echo
+              echo "Merge conflicts:"
+              echo '```text'
+              printf '%s\n' "$CONFLICT_PATHS"
+              echo '```'
+            fi
+          } > "$body_file"
+
+          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label upstream-sync --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [[ -n "$issue_number" ]]; then
+            gh issue edit "$issue_number" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body_file" --label upstream-sync,needs-manual-review
+          fi
+
+      - name: Open sync pull request
+        if: steps.sync.outputs.status == 'pushed'
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          SYNC_BRANCH: ${{ steps.sync.outputs.sync_branch }}
+          SOURCE_SHA: ${{ steps.sync.outputs.source_sha }}
+          TARGET_SHA: ${{ steps.sync.outputs.target_sha }}
+          REVIEW_PATHS: ${{ steps.sync.outputs.review_paths }}
+        run: |
+          set -euo pipefail
+          gh label create upstream-sync --repo "$GITHUB_REPOSITORY" --color 1d76db --description "Automated upstream synchronization" --force
+          gh label create needs-manual-review --repo "$GITHUB_REPOSITORY" --color d93f0b --description "Automation stopped for manual review" --force
+
+          body_file="$RUNNER_TEMP/upstream-sync-pr.md"
+          {
+            echo "Synchronizes \`main\` with official \`xai-org/grok-build@${SOURCE_SHA}\`."
+            echo
+            echo "Base before merge: \`${TARGET_SHA}\`"
+            if [[ -n "$REVIEW_PATHS" ]]; then
+              echo
+              echo "Sensitive paths changed; this PR requires manual review:"
+              echo '```text'
+              printf '%s\n' "$REVIEW_PATHS"
+              echo '```'
+            else
+              echo
+              echo "No configured sensitive paths changed. Required checks may auto-merge this PR."
+            fi
+          } > "$body_file"
+
+          pr_url="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$SYNC_BRANCH" --state open --json url --jq '.[0].url // empty')"
+          if [[ -z "$pr_url" ]]; then
+            pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$SYNC_BRANCH" --title "Sync official grok-build ${SOURCE_SHA:0:12}" --body-file "$body_file" --label upstream-sync)"
+          fi
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+          if [[ -n "$REVIEW_PATHS" ]]; then
+            gh pr edit "$pr_url" --repo "$GITHUB_REPOSITORY" --add-label needs-manual-review
+          else
+            gh pr merge "$pr_url" --repo "$GITHUB_REPOSITORY" --auto --merge
+          fi

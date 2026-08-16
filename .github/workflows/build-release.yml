@@ -9,9 +9,8 @@ on:
   pull_request:
     branches: [main]
 
-# contents:write is required to create/update GitHub Releases.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -117,6 +116,8 @@ jobs:
     name: Publish tagged Release
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: write
     if: >
       always()
       && startsWith(github.ref, 'refs/tags/')
@@ -161,6 +162,8 @@ jobs:
     name: Publish immutable prerelease (main)
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: write
     if: >
       github.ref == 'refs/heads/main'
       && github.event_name == 'push'
@@ -169,6 +172,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Derive immutable prerelease version
         id: version
@@ -176,6 +181,14 @@ jobs:
           short_sha="${GITHUB_SHA::7}"
           tag="v0.0.0-dev.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.${short_sha}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          version_file="crates/codegen/xai-grok-version/Cargo.toml"
+          current_version="$(awk -F'"' '/^version = / { print $2; exit }' "$version_file")"
+          previous_version="$(git show "${GITHUB_SHA}^1:${version_file}" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }' || true)"
+          if [[ -n "$current_version" && "$current_version" != "$previous_version" ]]; then
+            release_tag="v${current_version}-gcode.${GITHUB_RUN_NUMBER}"
+            echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -215,3 +228,24 @@ jobs:
             "${files[@]}"
 
           echo "✅ Published ${tag} with ${#files[@]} artifact(s)."
+
+      - name: Publish versioned Gcode prerelease
+        if: steps.version.outputs.release_tag != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(artifacts/${BINARY_NAME}-*.tar.gz artifacts/${BINARY_NAME}-*.tar.gz.sha256)
+
+          bash scripts/generate-release-notes.sh \
+            "$RELEASE_TAG" "$GITHUB_SHA" "$GITHUB_REPOSITORY" artifacts version-release-notes.md
+
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "gcode $RELEASE_TAG" \
+            --notes-file version-release-notes.md \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            "${files[@]}"

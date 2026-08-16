@@ -1,7 +1,7 @@
 name: Verify no forced login
 
 # Ensures gcode never auto-forces interactive Grok/xAI login at startup.
-# Multi-provider mode opens the main TUI; /login and --force-login remain opt-in.
+# The main TUI opens directly; /login and --force-login remain opt-in.
 
 on:
   push:
