@@ -199,13 +199,6 @@ fn start_early_prefetch_impl(
     grok_com_config: Option<GrokComConfig>,
     sync_managed: bool,
 ) -> Option<EarlyPrefetchHandle> {
-    if grok_com_config
-        .as_ref()
-        .is_some_and(GrokComConfig::grok_auth_disabled)
-    {
-        tracing::info!("startup model/settings prefetch skipped: Grok auth disabled");
-        return None;
-    }
     let grok_home = crate::util::grok_home::grok_home();
     let auth = AuthManager::new(&grok_home, grok_com_config.unwrap_or_default()).current();
     start_early_prefetch_with_auth_gated(auth, sync_managed)

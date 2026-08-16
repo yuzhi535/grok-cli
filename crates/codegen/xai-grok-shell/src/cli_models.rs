@@ -16,8 +16,6 @@ pub enum AuthStatus {
     ModelCredentials(String),
     DeploymentKey,
     NotAuthenticated,
-    /// Grok auth disabled (multi-provider / custom models mode).
-    NoGrokAuth,
 }
 
 impl AuthStatus {
@@ -30,9 +28,6 @@ impl AuthStatus {
     pub fn resolve(agent_config: &AgentConfig) -> Self {
         if crate::agent::auth_method::has_xai_api_key_env() {
             return Self::ApiKey;
-        }
-        if agent_config.grok_com_config.grok_auth_disabled() {
-            return Self::NoGrokAuth; // multi-provider mode, no grok login
         }
         if agent_config.create_auth_manager().current().is_some() {
             let origin = &agent_config.grok_com_config.grok_ws_origin;

@@ -1,0 +1,35 @@
+# Optional Gcode configuration for ChatGPT / OpenAI Codex OAuth.
+#
+# This is a focused example, not a managed model catalog. Copy it to
+# ~/.gcode/config.toml on a fresh install, or merge these tables into an
+# existing config. The release archive installs the helper separately at
+# ~/.gcode/bin/gcode-openai-codex-auth.
+
+[auth_provider.openai-codex]
+command = "$HOME/.gcode/bin/gcode-openai-codex-auth"
+token_ttl_secs = 3600
+timeout_secs = 30
+
+[model."openai-codex-gpt-5.4"]
+model = "gpt-5.4"
+base_url = "https://chatgpt.com/backend-api"
+api_backend = "responses"
+auth_provider = "openai-codex"
+name = "OpenAI GPT-5.4 (ChatGPT OAuth)"
+context_window = 272000
+
+[model."openai-codex-gpt-5.4-mini"]
+model = "gpt-5.4-mini"
+base_url = "https://chatgpt.com/backend-api"
+api_backend = "responses"
+auth_provider = "openai-codex"
+name = "OpenAI GPT-5.4 mini (ChatGPT OAuth)"
+context_window = 272000
+
+[model."openai-codex-gpt-5.6-terra"]
+model = "gpt-5.6-terra"
+base_url = "https://chatgpt.com/backend-api"
+api_backend = "responses"
+auth_provider = "openai-codex"
+name = "OpenAI GPT-5.6 Terra (ChatGPT OAuth)"
+context_window = 272000

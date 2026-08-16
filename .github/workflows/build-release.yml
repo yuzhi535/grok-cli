@@ -77,7 +77,10 @@ jobs:
           mkdir -p dist
           BIN="target/${{ matrix.target }}/release/${BINARY_NAME}"
           cp "$BIN" "dist/${BINARY_NAME}"
+          cp scripts/gcode-openai-codex-auth dist/gcode-openai-codex-auth
+          cp config/openai-codex.toml dist/openai-codex.toml
           chmod +x "dist/${BINARY_NAME}"
+          chmod +x dist/gcode-openai-codex-auth
           # Strip debug symbols for smaller size (best-effort; may no-op for some targets)
           strip "dist/${BINARY_NAME}" || true
 
@@ -89,7 +92,8 @@ jobs:
       - name: Create archive
         run: |
           cd dist
-          tar -czvf "../${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" "${BINARY_NAME}"
+          tar -czvf "../${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" \
+            "${BINARY_NAME}" gcode-openai-codex-auth openai-codex.toml
           cd ..
           if command -v sha256sum >/dev/null; then
             sha256sum "${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" \

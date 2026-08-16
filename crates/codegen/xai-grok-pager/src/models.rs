@@ -16,7 +16,6 @@ pub async fn list_available_models(agent_config: &AgentConfig) -> Result<()> {
         }
         AuthStatus::DeploymentKey => println!("You are authenticated via deployment key."),
         AuthStatus::NotAuthenticated => println!("You are not authenticated."),
-        AuthStatus::NoGrokAuth => println!("Grok auth disabled (multi-provider mode)."),
     }
     println!();
 

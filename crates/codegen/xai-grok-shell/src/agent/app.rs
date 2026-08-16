@@ -350,9 +350,7 @@ async fn run_headless_inner(
     crate::http::set_process_client_mode_headless();
     use crate::agent::relay::spawn_relay_connection_with_callback;
     use tokio_util::sync::CancellationToken;
-    // Headless's only transport is the relay (no IPC fallback), so a session is required.
-    // (skipped if grok_auth_disabled for multi-provider setups)
-    const HEADLESS_NO_SESSION: &str = "Headless mode requires a grok.com session (or set disable_grok_auth = true + custom model). \
+    const HEADLESS_NO_SESSION: &str = "Headless mode requires a grok.com session. \
         Run `grok login` to sign in, or use `grok agent stdio` for API-key access.";
     xai_file_utils::queue::cleanup_orphaned_uploads(
         &grok_home::grok_home(),
@@ -361,11 +359,7 @@ async fn run_headless_inner(
     let mut agent_config = agent_config.clone();
     agent_config.mode = crate::agent::config::AgentMode::Headless;
     let ctx = &agent_config.grok_com_config;
-    let grok_auth_disabled = ctx.grok_auth_disabled();
-    let (mut auth, did_browser_flow) = if grok_auth_disabled {
-        // Multi-provider mode: no Grok auth at all.
-        (GrokAuth::default(), false)
-    } else if no_browser {
+    let (mut auth, did_browser_flow) = if no_browser {
         // No-browser mode: only use cached credentials, skip OAuth flow
         let auth_manager = agent_config.create_auth_manager();
         match auth_manager.current() {
@@ -432,15 +426,11 @@ async fn run_headless_inner(
     let outgoing = acp_outgoing_tx.compat_write();
     let acp_incoming_tx = Arc::new(TokioMutex::new(acp_incoming_tx));
     let shared_auth_manager = Arc::new(agent_config.create_auth_manager());
-    let relay_config = if grok_auth_disabled {
-        None
-    } else {
+    let Some(relay_config) =
         relay_config_for_session(Some(&auth), &agent_config, &shared_auth_manager)
-    };
-
-    if relay_config.is_none() && !grok_auth_disabled {
+    else {
         anyhow::bail!("{HEADLESS_NO_SESSION}");
-    }
+    };
 
     // Capture the grok build URL for the first-connection callback
     let grok_code_url = format!("{}/build", ctx.grok_ws_origin);
@@ -461,21 +451,12 @@ async fn run_headless_inner(
         }
     });
     let cancel = CancellationToken::new();
-    let (agent_to_ws_tx, _relay_handle) = if let Some(relay_config) = relay_config {
-        let (tx, handle) = spawn_relay_connection_with_callback(
-            relay_config,
-            ws_to_agent_tx.clone(),
-            Some(cancel.clone()),
-            Some(on_first_connect),
-        );
-        (tx, Some(handle))
-    } else {
-        // Keep the existing outbound bridge alive without starting a Grok relay.
-        // Its receiver is intentionally dropped so persisted responses follow the
-        // same no-active-relay path as a disconnected websocket.
-        let (tx, _rx) = mpsc::unbounded_channel();
-        (tx, None)
-    };
+    let (agent_to_ws_tx, _relay_handle) = spawn_relay_connection_with_callback(
+        relay_config,
+        ws_to_agent_tx.clone(),
+        Some(cancel.clone()),
+        Some(on_first_connect),
+    );
 
     // Spawn the agent in a LocalSet that lives for the entire process
     let local_set = tokio::task::LocalSet::new();

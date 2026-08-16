@@ -11,7 +11,7 @@
 </h1>
 
 > **Gcode** 是基于 [xAI Grok Build](https://github.com/xai-org/grok-build) 的社区增强版（fork），二进制名改为 `gcode`。
-> 保留上游全部功能的同时，增加了自动构建、多供应商支持和开箱即用的配置。
+> 保留上游 Agent harness，并增加 Gcode 品牌、自动发布、非强制登录启动和可选的 ChatGPT / Codex OAuth。
 
 </div>
 
@@ -22,38 +22,37 @@
 | 特性 | 上游 Grok Build | Gcode |
 |------|:---:|:---:|
 | 二进制名 | `grok` / `gork` | `gcode` |
-| xAI 登录 | 必需 | **可选**（多供应商模式） |
-| 模型支持 | xAI Grok | **OpenAI Codex OAuth · DeepSeek · Anthropic · Kimi 等** |
+| 启动登录 | 首次启动进入登录流程 | **先进入主界面，登录由用户触发** |
+| ChatGPT 订阅 | 无 | **可选的 Gcode 自有 Codex OAuth** |
 | 自动构建 | 无 | **每次 push 自动 CI 构建 + 发布** |
-| 开箱配置 | 需自行配置 | **预置多供应商 config** |
 | 上游合并 | — | 最小改动策略，便于追踪上游 |
 
 ### 核心增强
 
-- **无需 xAI 登录**：内置多供应商桥接，直接用 OpenAI / DeepSeek / Anthropic 等账号即可使用。
-- **ChatGPT / Codex OAuth（对齐 PI）**：走 `chatgpt.com/backend-api/codex/responses`，自动读 Codex CLI / PI / OpenCode 本地登录态并刷新 token。
+- **不强制登录**：启动直接进入主界面；`/login`、`gcode login` 和 `--force-login` 仍可显式发起登录。
+- **ChatGPT / Codex OAuth**：Gcode 自己完成浏览器登录，并只读写 `~/.gcode/auth.json`。
 - **自动 CI/CD**：push 到 `main` 自动构建 macOS ARM64 + Linux x86_64，发布到 GitHub Releases。
-- **预置模型配置**：内置 PI 模型导入工具，`gcode models` 即可查看所有可用模型。
-- **上游友好**：改动集中在一只手能数过来的文件中，合并上游更新时冲突极少。
+- **上游友好**：保留清晰的 fork 边界，便于持续合并上游更新。
+
+Gcode 不再提供 PI 模型目录导入，也不再附带通用 multi-provider bridge。上游原生的自定义模型配置能力仍然保留。
 
 ### 使用 ChatGPT 订阅（OpenAI Codex OAuth）
 
-与 PI 相同路径，不需要 Platform API Key：
+该功能不需要 OpenAI Platform API Key，也不依赖 PI、Codex CLI 或 OpenCode 的本地凭证：
 
-1. 用任一工具完成 ChatGPT 登录（任选其一即可）：
-   - `codex login`
-   - PI 的 OpenAI Codex 登录
-   - `opencode auth login`（OpenAI OAuth）
-2. 导入模型并安装凭证 helper：
+1. 从 release 压缩包安装凭证 helper，并在新配置中使用可选模板：
 
 ```sh
-node scripts/import-pi-models.mjs
-# 会写入 ~/.gcode/config.toml，并安装 ~/.gcode/bin/gcode-openai-codex-auth
+mkdir -p ~/.gcode/bin
+install -m 755 gcode-openai-codex-auth ~/.gcode/bin/gcode-openai-codex-auth
+
+# 仅限尚无 ~/.gcode/config.toml 的新安装；已有配置请手动合并模板中的表。
+test -e ~/.gcode/config.toml || cp openai-codex.toml ~/.gcode/config.toml
 ```
 
-3. 启动 `gcode`，选择 `pi-openai-codex-*` 模型（默认会跟 PI 的 default 对齐）。
+2. 启动 `gcode`，输入 `/login` 并选择 `ChatGPT (gcode)`；随后选择 `openai-codex-*` 模型。
 
-运行时行为（从 PI 抄过来）：
+运行时行为：
 
 | 项目 | 行为 |
 |------|------|
@@ -90,7 +89,7 @@ for the version of the code present in this tree.
 
 ## Installing the released binary
 
-每次 push 到 `main` 会自动构建，并更新 [Releases](https://github.com/yuzhi535/gcode/releases) 里的 **`latest`** 滚动发布。当前提供：
+每次 push 到 `main` 都会自动构建一个不可变的 prerelease。请在 [Releases](https://github.com/yuzhi535/gcode/releases) 页面选择最新的 `gcode v0.0.0-dev.*` 版本。当前提供：
 
 | 平台 | 产物 |
 |------|------|
@@ -100,8 +99,7 @@ for the version of the code present in this tree.
 ### macOS (Apple Silicon)
 
 ```sh
-curl -fsSL -o gcode.tar.gz \
-  https://github.com/yuzhi535/gcode/releases/download/latest/gcode-macos-arm64.tar.gz
+# 先从 Releases 页面下载 gcode-macos-arm64.tar.gz
 tar -xzf gcode.tar.gz
 chmod +x gcode
 sudo mv gcode /usr/local/bin/gcode   # 或放到任意在 PATH 里的目录
@@ -117,8 +115,7 @@ xattr -dr com.apple.quarantine "$(command -v gcode)"
 ### Linux (x86_64)
 
 ```sh
-curl -fsSL -o gcode.tar.gz \
-  https://github.com/yuzhi535/gcode/releases/download/latest/gcode-linux-x86_64.tar.gz
+# 先从 Releases 页面下载 gcode-linux-x86_64.tar.gz
 tar -xzf gcode.tar.gz
 chmod +x gcode
 sudo mv gcode /usr/local/bin/gcode
@@ -127,7 +124,7 @@ gcode --version
 
 ### 指定版本
 
-打了 `v*` tag 后会额外生成正式 release。把上面 URL 里的 `latest` 换成 tag 即可，例如：
+打了 `v*` tag 后会额外生成正式 release，例如：
 
 ```sh
 # 示例
@@ -170,10 +167,10 @@ cargo build -p xai-grok-pager-bin --release  # release binary: target/release/gc
 cargo check -p xai-grok-pager-bin            # fast validation
 ```
 
-The binary artifact is named `gcode`. It opens directly to the main TUI and the
-bundled multi-provider configuration does not require a Grok/xAI login. Supply
-the credential required by the model you select instead. `/login`, `gcode login`,
-and `--force-login` remain available when you explicitly want a Grok session.
+The binary artifact is named `gcode`. It opens directly to the main TUI without
+automatically dispatching an interactive Grok/xAI login. `/login`, `gcode login`,
+and `--force-login` remain available when you want to authenticate. Models still
+require their corresponding credentials before use.
 Its user-level state and configuration default to `~/.gcode`; set `GCODE_HOME` to
 use a different location (`GROK_HOME` remains accepted for compatibility). See the
 [authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).

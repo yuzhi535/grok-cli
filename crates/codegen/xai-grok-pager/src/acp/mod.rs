@@ -1116,7 +1116,7 @@ mod tests {
     fn unauthenticated_startup_contract_skips_login() {
         use xai_grok_shell::agent::auth_method::{AuthMethodsBuildInputs, build_auth_methods};
 
-        // Shell shape for a fresh multi-provider user: no API key, no session.
+        // Shell shape for a fresh user: no API key, no session.
         let built = build_auth_methods(AuthMethodsBuildInputs {
             has_external_api_key: false,
             has_cached_token: false,
