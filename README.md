@@ -61,7 +61,7 @@ for the version of the code present in this tree.
 
 ## Installing the released binary
 
-每次 push 到 `main` 会自动构建并发布不可变 prerelease。发布包需要本机已有 Node.js 20 或更高版本。当前提供：
+每次 push 到 `catpaw-gork` 会自动构建并发布不可变 prerelease。发布包需要本机已有 Node.js 20 或更高版本。当前提供：
 
 | 平台 | 产物 |
 |------|------|
@@ -72,7 +72,7 @@ for the version of the code present in this tree.
 
 ```sh
 curl -fsSL -o gork.tar.gz \
-  https://github.com/yuzhi535/gork/releases/download/<tag>/gork-macos-arm64.tar.gz
+  https://github.com/yuzhi535/gcode/releases/download/<tag>/gork-macos-arm64.tar.gz
 mkdir -p "$HOME/.local/share/gork" "$HOME/.local/bin"
 tar -xzf gork.tar.gz -C "$HOME/.local/share/gork"
 ln -sfn "$HOME/.local/share/gork/gork" "$HOME/.local/bin/gork"
@@ -89,7 +89,7 @@ xattr -dr com.apple.quarantine "$HOME/.local/share/gork"
 
 ```sh
 curl -fsSL -o gork.tar.gz \
-  https://github.com/yuzhi535/gork/releases/download/<tag>/gork-linux-x86_64.tar.gz
+  https://github.com/yuzhi535/gcode/releases/download/<tag>/gork-linux-x86_64.tar.gz
 mkdir -p "$HOME/.local/share/gork" "$HOME/.local/bin"
 tar -xzf gork.tar.gz -C "$HOME/.local/share/gork"
 ln -sfn "$HOME/.local/share/gork/gork" "$HOME/.local/bin/gork"
@@ -98,14 +98,14 @@ gork --version
 
 ### 指定版本
 
-打了 `v*` tag 后会额外生成正式 release。把上面 URL 里的 `latest` 换成 tag 即可，例如：
+在 `catpaw-gork` 分支打 `gork-v*` tag 后会额外生成正式 release，例如：
 
 ```sh
 # 示例
-https://github.com/yuzhi535/gork/releases/download/v0.1.0/gork-macos-arm64.tar.gz
+https://github.com/yuzhi535/gcode/releases/download/gork-v0.1.0/gork-macos-arm64.tar.gz
 ```
 
-也可以在 Releases 页面手动下载：https://github.com/yuzhi535/gork/releases
+也可以在 Releases 页面手动下载：https://github.com/yuzhi535/gcode/releases
 
 ### 官方原版
 

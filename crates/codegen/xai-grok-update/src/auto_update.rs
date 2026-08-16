@@ -29,9 +29,9 @@ const MSG_RUN_UPDATE_MANUAL: &str = "Run `grok update` to get the latest version
 /// Manual-install one-liner for this platform's bootstrap installer.
 fn manual_install_cmd() -> &'static str {
     if cfg!(windows) {
-        "irm https://github.com/yuzhi535/gork/releases/latest/download/install.ps1 | iex"
+        "irm https://github.com/yuzhi535/gcode/releases/latest/download/install.ps1 | iex"
     } else {
-        "curl -fsSL https://github.com/yuzhi535/gork/releases/latest/download/install.sh | bash"
+        "curl -fsSL https://github.com/yuzhi535/gcode/releases/latest/download/install.sh | bash"
     }
 }
 
@@ -39,7 +39,7 @@ fn manual_install_cmd() -> &'static str {
 fn reinstall_hint(installer: &str) -> String {
     match installer {
         "npm" => "Please reinstall via npm:\n  npm i -g @xai-official/grok".to_string(),
-        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo yuzhi535/gork --pattern 'gork-*'".to_string(),
+        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo yuzhi535/gcode --pattern 'gork-*'".to_string(),
         _ => format!("Please reinstall via:\n  {}", manual_install_cmd()),
     }
 }
@@ -2001,7 +2001,7 @@ async fn gh_release_download(tag: &str, pattern: &str, dest: &std::path::Path) -
     Ok(())
 }
 
-/// Download and install Gork from GitHub Releases (yuzhi535/gork).
+/// Download and install Gork from GitHub Releases (yuzhi535/gcode).
 ///
 /// Uses `gh release download` to fetch the binary matching the current platform.
 /// This works anywhere the `gh` CLI is authenticated, without needing npm or
@@ -3461,7 +3461,7 @@ mod tests {
             "should suggest gh release download: {hint}"
         );
         assert!(
-            hint.contains("yuzhi535/gork"),
+            hint.contains("yuzhi535/gcode"),
             "should name the repo: {hint}"
         );
     }
