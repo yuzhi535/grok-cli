@@ -1,8 +1,10 @@
 use super::*;
+use crate::notification::ScheduledTaskRemovedReason;
 
 fn removed(task_id: &str) -> ScheduledTaskRemoved {
     ScheduledTaskRemoved {
         task_id: task_id.into(),
+        reason: ScheduledTaskRemovedReason::Deleted,
         generation: String::new(),
         revision: 0,
     }
@@ -105,4 +107,23 @@ async fn batch_distinguishes_dropped_and_rejected_acknowledgements() {
             consumer_rejections: vec!["rejected".into()],
         })
     );
+}
+
+#[tokio::test]
+async fn bounded_channel_drops_newest_when_full() {
+    let (handle, mut receiver) = ToolNotificationHandle::bounded_channel(1);
+    handle.send_scheduled_task_created(created("kept"));
+    handle.send_scheduled_task_created(created("dropped"));
+
+    assert_eq!(task_id(&receiver.recv().await.unwrap()), "kept");
+    assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn capped_channel_evicts_lossy_event_for_terminal_event() {
+    let (handle, mut receiver) = ToolNotificationHandle::capped_channel(1);
+    handle.send_scheduled_task_created(created("lossy"));
+    handle.send(ToolNotification::ScheduledTaskRemoved(removed("terminal")));
+
+    assert_eq!(task_id(&receiver.recv().await.unwrap()), "terminal");
 }

@@ -2,9 +2,6 @@
 # Gork is the harness. CatPaw supplies model inference only through the local
 # loopback gateway; no CatPaw credential is stored in this file.
 
-[grok_com_config]
-disable_grok_auth = true
-
 [cli]
 auto_update = false
 
