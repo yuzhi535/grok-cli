@@ -9,15 +9,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::allow_path::normalize_allow_path;
 #[cfg(all(feature = "enforce", unix))]
 use crate::deny::{
-    apply_deny_globs_to_capability_set, apply_deny_paths_to_capability_set, effective_deny_paths,
-    partition_deny_entries,
+    apply_deny_globs_to_capability_set, apply_deny_paths_to_capability_set,
+    apply_write_deny_paths_to_capability_set, effective_deny_paths, partition_deny_entries,
 };
+use crate::hook_write_deny::profile_hook_write_deny;
 use crate::paths::grok_home;
 #[cfg(all(feature = "enforce", unix))]
 use crate::paths::{DEVICE_DIRS, DEVICE_FILES};
 use crate::paths::{essential_writable_paths, essential_writable_paths_minimal};
+use xai_grok_config::GlobalHookSource;
 
 /// A resolved sandbox profile ready to be converted to a `CapabilitySet`.
 #[derive(Debug, Clone)]
@@ -30,10 +33,16 @@ pub struct SandboxProfile {
     pub read_write: Vec<PathBuf>,
     /// Paths denied entirely (overrides read_only/read_write)
     pub deny: Vec<PathBuf>,
+    /// Typed direct global hook sources (write-denied, still readable).
+    pub write_deny: Vec<GlobalHookSource>,
     /// Whether to grant read access to the entire filesystem by default
     pub default_read: bool,
     /// Whether child processes should have network blocked
     pub restrict_network: bool,
+}
+
+fn resolve_write_deny(profile: &ProfileName) -> anyhow::Result<Vec<GlobalHookSource>> {
+    profile_hook_write_deny(profile)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -280,6 +289,27 @@ impl ProfileName {
             }
         }
 
+        // Direct global-hook write-deny (macOS Seatbelt; Linux via bwrap).
+        if !profile.write_deny.is_empty() {
+            let mut pairs: Vec<(PathBuf, bool)> = profile
+                .write_deny
+                .iter()
+                .map(|s| (s.path.clone(), s.is_dir()))
+                .collect();
+            #[cfg(unix)]
+            {
+                let files =
+                    xai_grok_config::validated_hook_json_files_for_sources(&profile.write_deny)
+                        .map_err(|e| anyhow::anyhow!("hook JSON alias validation failed: {e}"))?;
+                for f in files {
+                    if !pairs.iter().any(|(p, _)| p == &f) {
+                        pairs.push((f, false));
+                    }
+                }
+            }
+            apply_write_deny_paths_to_capability_set(&mut caps, &pairs, &profile.read_write)?;
+        }
+
         // Kernel deny (read+write): macOS Seatbelt rules; Linux via bwrap bind-over.
         // The effective deny set is the profile's own `deny` (custom profiles only;
         // built-ins carry an empty `deny`). An empty set means there is nothing to
@@ -325,6 +355,7 @@ impl ProfileName {
                 read_only: vec![],
                 read_write: essential_writable_paths(workspace),
                 deny: vec![],
+                write_deny: resolve_write_deny(self)?,
                 default_read: true,
                 restrict_network: false,
             }),
@@ -363,6 +394,7 @@ impl ProfileName {
                     read_only: vec![],
                     read_write,
                     deny: vec![],
+                    write_deny: vec![],
                     default_read: true,
                     restrict_network: false,
                 })
@@ -373,6 +405,7 @@ impl ProfileName {
                 read_only: vec![],
                 read_write: essential_writable_paths_minimal(),
                 deny: vec![],
+                write_deny: resolve_write_deny(self)?,
                 default_read: true,
                 restrict_network: true,
             }),
@@ -398,6 +431,7 @@ impl ProfileName {
                 .chain(std::iter::once(home.join("Library")))
                 .filter(|p| p.exists())
                 .chain(std::iter::once(workspace.to_path_buf()))
+                .chain(std::iter::once(grok_home()))
                 .collect();
 
                 Ok(SandboxProfile {
@@ -405,6 +439,7 @@ impl ProfileName {
                     read_only: system_read,
                     read_write: essential_writable_paths(workspace),
                     deny: vec![],
+                    write_deny: resolve_write_deny(self)?,
                     default_read: false,
                     restrict_network: true,
                 })
@@ -422,7 +457,7 @@ impl ProfileName {
                 })?;
 
                 // Start from the base profile if `extends` is set
-                let mut profile = if let Some(base_name) = &profile_config.extends {
+                let (base, mut profile) = if let Some(base_name) = &profile_config.extends {
                     let base: ProfileName = base_name.parse().map_err(|e: String| {
                         anyhow::anyhow!("Profile '{name}' extends invalid base: {e}")
                     })?;
@@ -438,10 +473,10 @@ impl ProfileName {
                              cannot extend other custom profiles (only built-ins)"
                         );
                     }
-                    base.resolve(workspace, config)?
+                    let resolved = base.resolve(workspace, config)?;
+                    (base, resolved)
                 } else {
-                    // Default: start from workspace
-                    Self::Workspace.resolve(workspace, config)?
+                    (Self::Workspace, Self::Workspace.resolve(workspace, config)?)
                 };
 
                 profile.name = name.clone();
@@ -451,19 +486,25 @@ impl ProfileName {
                     profile.restrict_network = restrict_net;
                 }
 
-                // Add custom read-only paths
                 for path_str in &profile_config.read_only {
-                    profile.read_only.push(PathBuf::from(path_str));
+                    if let Some(path) = normalize_allow_path(path_str) {
+                        profile.read_only.push(path);
+                    }
                 }
-
-                // Add custom read-write paths
                 for path_str in &profile_config.read_write {
-                    profile.read_write.push(PathBuf::from(path_str));
+                    if let Some(path) = normalize_allow_path(path_str) {
+                        profile.read_write.push(path);
+                    }
                 }
 
-                // Add custom deny paths
+                // Deny entries stay raw: globs there are partitioned and
+                // enforced as patterns, not directory grants.
                 for path_str in &profile_config.deny {
                     profile.deny.push(PathBuf::from(path_str));
+                }
+
+                if matches!(base, Self::Devbox) {
+                    profile.write_deny.clear();
                 }
 
                 Ok(profile)
@@ -528,8 +569,26 @@ mod tests {
         assert_eq!(p.to_string(), "my-custom");
     }
 
+    /// Hosts with a retargetable `$GROK_HOME/hooks` symlink (fail-closed under
+    /// write-deny) cannot resolve enforcing profiles against the real home.
+    fn skip_if_host_hook_write_deny_unresolvable() -> bool {
+        if !crate::hook_write_deny::profile_enforces_hook_write_deny(&ProfileName::Workspace) {
+            return false;
+        }
+        match crate::hook_write_deny::resolve_hook_write_deny_snapshot() {
+            Ok(_) => false,
+            Err(e) => {
+                eprintln!("skipping profile resolve test: host hook write-deny unresolvable ({e})");
+                true
+            }
+        }
+    }
+
     #[test]
     fn built_in_network_restriction_values() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
         let workspace = std::env::current_dir().unwrap();
         let config = SandboxConfig::default();
 
@@ -593,6 +652,9 @@ mod tests {
 
     #[test]
     fn custom_network_restriction_inherits_and_overrides_base() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
         let workspace = std::env::current_dir().unwrap();
         let config = network_inheritance_config();
 
@@ -611,6 +673,9 @@ mod tests {
     #[test]
     #[cfg(all(feature = "enforce", unix))]
     fn strict_allowlist_includes_run_and_var_when_present() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
         // Regression: /run (resolv realpath) + /var (NSS/SSSD) when present.
         let workspace = std::env::temp_dir();
         let profile = ProfileName::Strict
@@ -636,6 +701,9 @@ mod tests {
     #[test]
     #[cfg(all(feature = "enforce", unix))]
     fn base_profile_capability_set_builds() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
         // A base profile with no `deny` builds a CapabilitySet without erroring.
         let workspace = std::env::current_dir().unwrap();
         let config = SandboxConfig::default();
@@ -646,6 +714,9 @@ mod tests {
     #[test]
     #[cfg(all(feature = "enforce", unix))]
     fn custom_profile_from_config() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
         let workspace = std::env::current_dir().unwrap();
         let config = SandboxConfig {
             profiles: HashMap::from([(
@@ -752,6 +823,97 @@ read_write = ["/tmp/ci-artifacts"]
         assert!(config.profiles.contains_key("ci"));
         assert_eq!(config.profiles["devbox"].read_only, vec!["/data"]);
         assert_eq!(config.profiles["devbox"].deny, vec!["/data/private"]);
+    }
+
+    /// Custom-profile resolve: allow entries are normalized, deny entries are not.
+    #[test]
+    fn custom_profile_strips_allow_globs_keeps_deny_globs() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
+        let workspace = std::env::current_dir().unwrap();
+        let config = SandboxConfig {
+            profiles: HashMap::from([(
+                "cargo".to_string(),
+                ProfileConfig {
+                    extends: Some("workspace".to_string()),
+                    restrict_network: None,
+                    read_only: vec!["/opt/tooling/**".to_string()],
+                    read_write: vec![
+                        "/home/user/.cargo/registry/cache/**".to_string(),
+                        "/home/user/.cargo/registry/index".to_string(),
+                    ],
+                    deny: vec!["**/.env".to_string(), "/secrets/**".to_string()],
+                },
+            )]),
+        };
+        let resolved = ProfileName::Custom("cargo".to_string())
+            .resolve_profile(&workspace, &config)
+            .expect("cargo profile resolves");
+
+        // Custom entries are appended after the base profile's own paths.
+        assert_eq!(
+            resolved.read_write[resolved.read_write.len() - 2..],
+            [
+                PathBuf::from("/home/user/.cargo/registry/cache"),
+                PathBuf::from("/home/user/.cargo/registry/index"),
+            ]
+        );
+        assert_eq!(resolved.read_only, [PathBuf::from("/opt/tooling")]);
+        assert_eq!(
+            resolved.deny,
+            [PathBuf::from("**/.env"), PathBuf::from("/secrets/**")]
+        );
+    }
+
+    /// Building the capability set pre-creates missing `read_write` dirs; a
+    /// trailing-`/**` entry must create/grant the parent, never a literal `**` dir.
+    #[test]
+    #[cfg(all(feature = "enforce", unix))]
+    fn capability_set_trailing_glob_does_not_create_starstar_dir() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "grok-sandbox-starstar-capset-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(cache.join("registry-a1b2")).unwrap();
+        let allow_glob = format!(
+            "{}/**",
+            dunce::canonicalize(&cache)
+                .unwrap_or_else(|_| cache.clone())
+                .display()
+        );
+
+        let workspace = root.join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let config = SandboxConfig {
+            profiles: HashMap::from([(
+                "cargo".to_string(),
+                ProfileConfig {
+                    extends: Some("workspace".to_string()),
+                    restrict_network: None,
+                    read_only: vec![],
+                    read_write: vec![allow_glob],
+                    deny: vec![],
+                },
+            )]),
+        };
+
+        ProfileName::Custom("cargo".to_string())
+            .to_capability_set_with_config(&workspace, &config)
+            .expect("capability set builds");
+
+        let starstar = cache.join("**");
+        assert!(
+            !starstar.exists(),
+            "normalized allow path must not create a literal '**' directory at {starstar:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -901,6 +1063,9 @@ read_write = ["/tmp/ci-artifacts"]
     #[test]
     #[cfg(all(feature = "enforce", unix))]
     fn strict_capability_set_builds_without_openable_dev_tty() {
+        if skip_if_host_hook_write_deny_unresolvable() {
+            return;
+        }
         let workspace = std::env::current_dir().unwrap();
         let result = ProfileName::Strict.to_capability_set(&workspace);
         assert!(
