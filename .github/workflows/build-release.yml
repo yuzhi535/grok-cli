@@ -188,7 +188,7 @@ jobs:
           current_version="$(awk -F'"' '/^version = / { print $2; exit }' "$version_file")"
           previous_version="$(git show "${GITHUB_SHA}^1:${version_file}" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }' || true)"
           if [[ -n "$current_version" && "$current_version" != "$previous_version" ]]; then
-            release_tag="v${current_version}-gcode.${GITHUB_RUN_NUMBER}"
+            release_tag="gork-v${current_version}-catpaw.${GITHUB_RUN_NUMBER}"
             echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -231,7 +231,7 @@ jobs:
 
           echo "✅ Published ${tag} with ${#files[@]} artifact(s)."
 
-      - name: Publish versioned Gcode prerelease
+      - name: Publish versioned Gork prerelease
         if: steps.version.outputs.release_tag != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -246,7 +246,7 @@ jobs:
 
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "gcode $RELEASE_TAG" \
+            --title "gork $RELEASE_TAG" \
             --notes-file version-release-notes.md \
             --prerelease \
             --target "$GITHUB_SHA" \
