@@ -1,0 +1,111 @@
+#!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { access, copyFile, mkdir, readFile, realpath } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const launcherPath = await realpath(fileURLToPath(import.meta.url));
+const installRoot = path.dirname(launcherPath);
+const core = process.env.GORK_CORE_BIN || path.join(installRoot, "gork-core");
+const packagedConfig = path.join(installRoot, "share", "gork", "managed_config.toml");
+const gatewayEntry = path.join(installRoot, "lib", "catpaw-gateway", "serve.mjs");
+const gorkHome = process.env.GORK_HOME || process.env.GROK_HOME || path.join(os.homedir(), ".gork");
+const managedConfig = path.join(gorkHome, "managed_config.toml");
+
+await requireReadable(core, "Gork core binary");
+await requireReadable(packagedConfig, "CatPaw model config");
+await requireReadable(gatewayEntry, "CatPaw model gateway");
+await installManagedConfig();
+
+const childEnv = {
+  ...process.env,
+  GORK_HOME: gorkHome,
+  GROK_HOME: gorkHome,
+  CATPAW_GORK_LOCAL_TOKEN: process.env.CATPAW_GORK_LOCAL_TOKEN || "loopback-only",
+};
+
+let gateway = null;
+if (!isOfflineCommand(process.argv.slice(2))) {
+  const health = await gatewayHealth();
+  if (health === "foreign") {
+    fail("Port 18765 is occupied by a service that is not the CatPaw Gork gateway.");
+  }
+  if (health !== "ready") {
+    gateway = spawn(process.execPath, [gatewayEntry], { env: childEnv, stdio: ["ignore", "ignore", "inherit"] });
+    await waitForGateway(gateway);
+  }
+}
+
+const coreProcess = spawn(core, process.argv.slice(2), { env: childEnv, stdio: "inherit" });
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => coreProcess.kill(signal));
+}
+const exit = await waitForExit(coreProcess);
+if (gateway) {
+  gateway.kill("SIGTERM");
+  await waitForExit(gateway).catch(() => undefined);
+}
+process.exitCode = exit.code ?? (exit.signal ? 128 : 1);
+
+async function installManagedConfig() {
+  await mkdir(gorkHome, { recursive: true, mode: 0o700 });
+  try {
+    const current = await readFile(managedConfig, "utf8");
+    if (!current.includes("catpaw-gork-managed")) {
+      fail(`${managedConfig} already exists and is not owned by the CatPaw Gork distribution.`);
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  await copyFile(packagedConfig, managedConfig, fsConstants.COPYFILE_FICLONE);
+}
+
+async function gatewayHealth() {
+  try {
+    const response = await fetch("http://127.0.0.1:18765/health", { signal: AbortSignal.timeout(500) });
+    if (!response.ok) return "foreign";
+    const body = await response.json();
+    return body?.service === "catpaw-gork-model-gateway" ? "ready" : "foreign";
+  } catch {
+    return "absent";
+  }
+}
+
+async function waitForGateway(child) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (child.exitCode !== null) fail(`CatPaw model gateway exited with code ${child.exitCode}.`);
+    if (await gatewayHealth() === "ready") return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  child.kill("SIGTERM");
+  fail("Timed out starting the CatPaw model gateway.");
+}
+
+function isOfflineCommand(args) {
+  const first = args[0];
+  return args.includes("--version")
+    || args.includes("--help")
+    || ["version", "help", "models", "doctor", "inspect", "completions"].includes(first);
+}
+
+function waitForExit(child) {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+}
+
+async function requireReadable(filename, label) {
+  try {
+    await access(filename, fsConstants.R_OK);
+  } catch {
+    fail(`${label} is missing from the release: ${filename}`);
+  }
+}
+
+function fail(message) {
+  process.stderr.write(`[gork] ${message}\n`);
+  process.exit(1);
+}

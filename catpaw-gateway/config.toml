@@ -1,0 +1,112 @@
+# catpaw-gork-managed
+# Gork is the harness. CatPaw supplies model inference only through the local
+# loopback gateway; no CatPaw credential is stored in this file.
+
+[grok_com_config]
+disable_grok_auth = true
+
+[cli]
+auto_update = false
+
+[features]
+remote_fetch = false
+
+[models]
+default = "catpaw-gpt-5.6-sol"
+allowed_models = ["catpaw-*"]
+
+[model."catpaw-gpt-5.6-sol"]
+model = "catpaw-gpt-5.6-sol"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw GPT-5.6 Sol"
+context_window = 200000
+
+[model."catpaw-gpt-5.6-terra"]
+model = "catpaw-gpt-5.6-terra"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw GPT-5.6 Terra"
+context_window = 200000
+
+[model."catpaw-gpt-5.6-luna"]
+model = "catpaw-gpt-5.6-luna"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw GPT-5.6 Luna"
+context_window = 200000
+
+[model."catpaw-claude-opus-4.8"]
+model = "catpaw-claude-opus-4.8"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw Claude Opus 4.8 (upstream 538 possible)"
+context_window = 200000
+
+[model."catpaw-claude-opus-4.6"]
+model = "catpaw-claude-opus-4.6"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw Claude Opus 4.6"
+context_window = 200000
+
+[model."catpaw-LongCat-2.0"]
+model = "catpaw-LongCat-2.0"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw LongCat 2.0"
+context_window = 200000
+
+[model."catpaw-glm-5.2"]
+model = "catpaw-glm-5.2"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw GLM 5.2"
+context_window = 200000
+
+[model."catpaw-MiniMax-M3"]
+model = "catpaw-MiniMax-M3"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw MiniMax M3"
+context_window = 200000
+
+[model."catpaw-kimi-k2.7-code"]
+model = "catpaw-kimi-k2.7-code"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw Kimi K2.7 Code"
+context_window = 200000
+
+[model."catpaw-deepseek-v4-pro"]
+model = "catpaw-deepseek-v4-pro"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw DeepSeek V4 Pro"
+context_window = 200000
+
+[model."catpaw-deepseek-v4-flash"]
+model = "catpaw-deepseek-v4-flash"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw DeepSeek V4 Flash"
+context_window = 200000
+
+[model."catpaw-glm-5v-turbo"]
+model = "catpaw-glm-5v-turbo"
+base_url = "http://127.0.0.1:18765/v1"
+api_backend = "chat_completions"
+env_key = "CATPAW_GORK_LOCAL_TOKEN"
+name = "CatPaw GLM 5V Turbo"
+context_window = 200000

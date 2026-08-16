@@ -4,63 +4,34 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png">
     <source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png">
-    <img alt="Gcode logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
+    <img alt="Gork logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
   </picture>
   <br>
-  Gcode
+  Gork
 </h1>
 
-> **Gcode** 是基于 [xAI Grok Build](https://github.com/xai-org/grok-build) 的社区增强版（fork），二进制名改为 `gcode`。
-> 保留上游全部功能的同时，增加了自动构建、多供应商支持和开箱即用的配置。
+> **Gork** 是专门承载 CatPaw 模型的 Grok Build harness。界面、上下文、计划、权限、工具、文件编辑和 diff 都由 Gork 管理；CatPaw 只负责模型推理与提出工具调用。
 
 </div>
 
 ---
 
-## 与上游 Grok Build 的区别
+## 职责边界
 
-| 特性 | 上游 Grok Build | Gcode |
-|------|:---:|:---:|
-| 二进制名 | `grok` / `gork` | `gcode` |
-| xAI 登录 | 必需 | **可选**（多供应商模式） |
-| 模型支持 | xAI Grok | **OpenAI Codex OAuth · DeepSeek · Anthropic · Kimi 等** |
-| 自动构建 | 无 | **每次 push 自动 CI 构建 + 发布** |
-| 开箱配置 | 需自行配置 | **预置多供应商 config** |
-| 上游合并 | — | 最小改动策略，便于追踪上游 |
-
-### 核心增强
-
-- **无需 xAI 登录**：内置多供应商桥接，直接用 OpenAI / DeepSeek / Anthropic 等账号即可使用。
-- **ChatGPT / Codex OAuth（对齐 PI）**：走 `chatgpt.com/backend-api/codex/responses`，自动读 Codex CLI / PI / OpenCode 本地登录态并刷新 token。
-- **自动 CI/CD**：push 到 `main` 自动构建 macOS ARM64 + Linux x86_64，发布到 GitHub Releases。
-- **预置模型配置**：内置 PI 模型导入工具，`gcode models` 即可查看所有可用模型。
-- **上游友好**：改动集中在一只手能数过来的文件中，合并上游更新时冲突极少。
-
-### 使用 ChatGPT 订阅（OpenAI Codex OAuth）
-
-与 PI 相同路径，不需要 Platform API Key：
-
-1. 用任一工具完成 ChatGPT 登录（任选其一即可）：
-   - `codex login`
-   - PI 的 OpenAI Codex 登录
-   - `opencode auth login`（OpenAI OAuth）
-2. 导入模型并安装凭证 helper：
-
-```sh
-node scripts/import-pi-models.mjs
-# 会写入 ~/.gcode/config.toml，并安装 ~/.gcode/bin/gcode-openai-codex-auth
-```
-
-3. 启动 `gcode`，选择 `pi-openai-codex-*` 模型（默认会跟 PI 的 default 对齐）。
-
-运行时行为（从 PI 抄过来）：
-
-| 项目 | 行为 |
+| 能力 | 所有者 |
 |------|------|
-| 端点 | `https://chatgpt.com/backend-api/codex/responses` |
-| 鉴权 | `Authorization: Bearer <oauth access>` |
-| 账号头 | JWT 里的 `chatgpt_account_id` → `chatgpt-account-id` |
-| 其它头 | `OpenAI-Beta: responses=experimental`，`originator: gcode` |
+| TUI、执行页、工具卡、文件 diff | Gork |
+| 上下文、计划、权限、工具执行 | Gork |
+| 模型路由与推理 | CatPaw |
+| CatPaw ACP Agent | 不进入执行链路 |
+
+### CatPaw 模型
+
+发布包只展示已经做过真实身份验真的 12 个 CatPaw 模型，包括 GPT-5.6 Sol/Terra/Luna、LongCat 2.0、Claude Opus 4.8/4.6、GLM、Kimi、MiniMax 和 DeepSeek。默认模型是 `catpaw-gpt-5.6-sol`。
+
+本地 loopback gateway 会把 Gork function tools 映射成 CatPaw client-owned tools。CatPaw 返回调用后，由 Gork 执行，再通过 `turn-end` 把结果交回模型。默认采用严格验真：CatPaw 历史记录中的实际模型身份通过后，内容才会进入 Gork。
+
+认证从 `CATPAW_COOKIE` 或官方 `~/.catpaw/sso_config.json` 加载。SSO 不写入 Gork 配置，也不会进入发往 loopback gateway 的 Bearer header。
 
 ---
 
@@ -90,39 +61,39 @@ for the version of the code present in this tree.
 
 ## Installing the released binary
 
-每次 push 到 `main` 会自动构建，并更新 [Releases](https://github.com/yuzhi535/gcode/releases) 里的 **`latest`** 滚动发布。当前提供：
+每次 push 到 `main` 会自动构建并发布不可变 prerelease。发布包需要本机已有 Node.js 20 或更高版本。当前提供：
 
 | 平台 | 产物 |
 |------|------|
-| macOS Apple Silicon | `gcode-macos-arm64.tar.gz` |
-| Linux x86_64 | `gcode-linux-x86_64.tar.gz` |
+| macOS Apple Silicon | `gork-macos-arm64.tar.gz` |
+| Linux x86_64 | `gork-linux-x86_64.tar.gz` |
 
 ### macOS (Apple Silicon)
 
 ```sh
-curl -fsSL -o gcode.tar.gz \
-  https://github.com/yuzhi535/gcode/releases/download/latest/gcode-macos-arm64.tar.gz
-tar -xzf gcode.tar.gz
-chmod +x gcode
-sudo mv gcode /usr/local/bin/gcode   # 或放到任意在 PATH 里的目录
-gcode --version
+curl -fsSL -o gork.tar.gz \
+  https://github.com/yuzhi535/gork/releases/download/<tag>/gork-macos-arm64.tar.gz
+mkdir -p "$HOME/.local/share/gork" "$HOME/.local/bin"
+tar -xzf gork.tar.gz -C "$HOME/.local/share/gork"
+ln -sfn "$HOME/.local/share/gork/gork" "$HOME/.local/bin/gork"
+gork --version
 ```
 
 若 macOS 提示「无法验证开发者」：
 
 ```sh
-xattr -dr com.apple.quarantine "$(command -v gcode)"
+xattr -dr com.apple.quarantine "$HOME/.local/share/gork"
 ```
 
 ### Linux (x86_64)
 
 ```sh
-curl -fsSL -o gcode.tar.gz \
-  https://github.com/yuzhi535/gcode/releases/download/latest/gcode-linux-x86_64.tar.gz
-tar -xzf gcode.tar.gz
-chmod +x gcode
-sudo mv gcode /usr/local/bin/gcode
-gcode --version
+curl -fsSL -o gork.tar.gz \
+  https://github.com/yuzhi535/gork/releases/download/<tag>/gork-linux-x86_64.tar.gz
+mkdir -p "$HOME/.local/share/gork" "$HOME/.local/bin"
+tar -xzf gork.tar.gz -C "$HOME/.local/share/gork"
+ln -sfn "$HOME/.local/share/gork/gork" "$HOME/.local/bin/gork"
+gork --version
 ```
 
 ### 指定版本
@@ -131,10 +102,10 @@ gcode --version
 
 ```sh
 # 示例
-https://github.com/yuzhi535/gcode/releases/download/v0.1.0/gcode-macos-arm64.tar.gz
+https://github.com/yuzhi535/gork/releases/download/v0.1.0/gork-macos-arm64.tar.gz
 ```
 
-也可以在 Releases 页面手动下载：https://github.com/yuzhi535/gcode/releases
+也可以在 Releases 页面手动下载：https://github.com/yuzhi535/gork/releases
 
 ### 官方原版
 
@@ -165,18 +136,12 @@ Requirements:
   and not currently tested from this tree.
 
 ```sh
-cargo run -p xai-grok-pager-bin              # build + launch the TUI (`gcode`)
-cargo build -p xai-grok-pager-bin --release  # release binary: target/release/gcode
+cargo run -p xai-grok-pager-bin              # build + launch the TUI (`gork`)
+cargo build -p xai-grok-pager-bin --release  # release core: target/release/gork
 cargo check -p xai-grok-pager-bin            # fast validation
 ```
 
-The binary artifact is named `gcode`. It opens directly to the main TUI and the
-bundled multi-provider configuration does not require a Grok/xAI login. Supply
-the credential required by the model you select instead. `/login`, `gcode login`,
-and `--force-login` remain available when you explicitly want a Grok session.
-Its user-level state and configuration default to `~/.gcode`; set `GCODE_HOME` to
-use a different location (`GROK_HOME` remains accepted for compatibility). See the
-[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
+The GitHub archive wraps the compiled `gork-core` with a Node launcher that installs the CatPaw managed model catalog and starts the loopback gateway for inference commands. User state remains under `~/.gork`; set `GORK_HOME` to use another directory (`GROK_HOME` remains accepted for compatibility).
 
 ## Documentation
 
@@ -192,7 +157,8 @@ MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
 
 | Path | Contents |
 |------|----------|
-| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `gcode` binary |
+| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds `gork-core` |
+| `catpaw-gateway` | Loopback model adapter, launcher, and CatPaw-only catalog |
 | `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
 | `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
 | `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |

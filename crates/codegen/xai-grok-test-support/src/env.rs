@@ -66,7 +66,7 @@ fn target_dir() -> PathBuf {
 fn local_grok_binary_path() -> PathBuf {
     target_dir()
         .join("debug")
-        .join(format!("gcode{}", std::env::consts::EXE_SUFFIX))
+        .join(format!("gork{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn ensure_local_grok_binary(binary: &Path) {
@@ -77,30 +77,24 @@ fn ensure_local_grok_binary(binary: &Path) {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let mut cmd = Command::new(&cargo);
     cmd.current_dir(workspace_root())
-        .args([
-            "build",
-            "-p",
-            "xai-grok-pager-bin",
-            "--bin",
-            "gcode",
-        ])
+        .args(["build", "-p", "xai-grok-pager-bin", "--bin", "gork"])
         .stdin(std::process::Stdio::null())
         .envs(xai_tty_utils::pager_env());
     xai_tty_utils::detach_std_command(&mut cmd);
     let output = cmd
         .output()
-        .unwrap_or_else(|e| panic!("failed to spawn {cargo} to build gcode: {e}"));
+        .unwrap_or_else(|e| panic!("failed to spawn {cargo} to build gork: {e}"));
 
     assert!(
         output.status.success(),
-        "failed to build gcode for lifecycle tests (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        "failed to build gork for lifecycle tests (exit {:?})\nstdout:\n{}\nstderr:\n{}",
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(
         binary.exists(),
-        "gcode build completed but binary missing at {}",
+        "gork build completed but binary missing at {}",
         binary.display()
     );
 }
@@ -114,7 +108,7 @@ pub fn grok_binary() -> PathBuf {
     }
 
     // Prefer the new binary name; keep the old env var as a fallback for older CI.
-    for key in ["CARGO_BIN_EXE_gcode", "CARGO_BIN_EXE_xai-grok-pager"] {
+    for key in ["CARGO_BIN_EXE_gork", "CARGO_BIN_EXE_xai-grok-pager"] {
         if let Ok(path) = std::env::var(key) {
             let p = PathBuf::from(path);
             if p.exists() {

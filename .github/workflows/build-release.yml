@@ -15,7 +15,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: gcode
+  BINARY_NAME: gork
 
 jobs:
   build:
@@ -74,22 +74,28 @@ jobs:
 
       - name: Prepare artifact
         run: |
-          mkdir -p dist
+          mkdir -p dist/lib/catpaw-gateway dist/share/gork
           BIN="target/${{ matrix.target }}/release/${BINARY_NAME}"
-          cp "$BIN" "dist/${BINARY_NAME}"
+          cp "$BIN" "dist/${BINARY_NAME}-core"
+          cp catpaw-gateway/gork-launcher.mjs "dist/${BINARY_NAME}"
+          cp catpaw-gateway/*.mjs dist/lib/catpaw-gateway/
+          cp catpaw-gateway/config.toml dist/share/gork/managed_config.toml
           chmod +x "dist/${BINARY_NAME}"
           # Strip debug symbols for smaller size (best-effort; may no-op for some targets)
-          strip "dist/${BINARY_NAME}" || true
+          strip "dist/${BINARY_NAME}-core" || true
 
       - name: Verify binary
         run: |
-          file "dist/${BINARY_NAME}" || true
-          "./dist/${BINARY_NAME}" --version || true
+          file "dist/${BINARY_NAME}-core" || true
+          node --check "dist/${BINARY_NAME}"
+          test_home="$(mktemp -d)"
+          GORK_HOME="$test_home" "./dist/${BINARY_NAME}" --version
+          grep -q 'catpaw-gork-managed' "$test_home/managed_config.toml"
 
       - name: Create archive
         run: |
           cd dist
-          tar -czvf "../${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" "${BINARY_NAME}"
+          tar -czvf "../${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" .
           cd ..
           if command -v sha256sum >/dev/null; then
             sha256sum "${BINARY_NAME}-${{ matrix.pretty_name }}.tar.gz" \
@@ -146,7 +152,7 @@ jobs:
 
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "gcode ${GITHUB_REF_NAME}" \
+            --title "gork ${GITHUB_REF_NAME}" \
             --notes "$(<release-notes.md)" \
             --generate-notes \
             "${files[@]}"
@@ -204,7 +210,7 @@ jobs:
 
           gh release create "${tag}" \
             --repo "${{ github.repository }}" \
-            --title "gcode ${tag}" \
+            --title "gork ${tag}" \
             --notes-file release-notes.md \
             --prerelease \
             --target "${{ github.sha }}" \
