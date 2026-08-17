@@ -116,6 +116,7 @@ jobs:
           BIN="target/${{ matrix.target }}/release/${BINARY_NAME}"
           cp "$BIN" "dist/${BINARY_NAME}-core"
           cp catpaw-gateway/gcode-launcher.mjs "dist/${BINARY_NAME}"
+          cp catpaw-gateway/gcode-update.mjs dist/gcode-update.mjs
           cp catpaw-gateway/*.mjs dist/lib/catpaw-gateway/
           cp catpaw-gateway/config.toml dist/share/gcode/managed_config.toml
           cat > dist/share/gcode/release.json <<JSON
@@ -134,6 +135,7 @@ jobs:
         run: |
           file "dist/${BINARY_NAME}-core" || true
           node --check "dist/${BINARY_NAME}"
+          node --check dist/gcode-update.mjs
           node --test catpaw-gateway/test/*.test.mjs
           test_home="$(mktemp -d)"
           GCODE_HOME="$test_home" "./dist/${BINARY_NAME}" --version
