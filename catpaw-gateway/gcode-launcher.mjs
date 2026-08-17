@@ -5,7 +5,7 @@ import { access, copyFile, mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isGcodeUpdateCommand, runGcodeUpdate } from "./gcode-update.mjs";
+import { isGcodeUpdateCommand, runGcodeUpdate, waitForExit } from "./gcode-update.mjs";
 
 const launcherPath = await realpath(fileURLToPath(import.meta.url));
 const installRoot = path.dirname(launcherPath);
@@ -109,13 +109,6 @@ function isOfflineCommand(args) {
   return args.includes("--version")
     || args.includes("--help")
     || ["version", "help", "models", "doctor", "inspect", "completions"].includes(first);
-}
-
-function waitForExit(child) {
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
 }
 
 async function requireReadable(filename, label) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -13,9 +13,25 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { platformAsset, runGcodeUpdate } from "../gcode-update.mjs";
+import { platformAsset, runGcodeUpdate, waitForExit } from "../gcode-update.mjs";
 
 const execFileAsync = promisify(execFile);
+
+test("waitForExit resolves after a child has already exited", async () => {
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  let timeout;
+  const outcome = await Promise.race([
+    waitForExit(child),
+    new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("waitForExit hung")), 250);
+    }),
+  ]).finally(() => clearTimeout(timeout));
+  assert.deepEqual(outcome, { code: 0, signal: null });
+});
 
 test("Gcode updater verifies and atomically activates a complete release", { concurrency: false }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "gcode-update-test-"));
