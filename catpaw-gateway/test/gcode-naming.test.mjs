@@ -44,6 +44,7 @@ test("launcher prefers Gcode names while accepting legacy input variables", asyn
   assert.match(launcher, /process\.env\.CATPAW_GORK_LOCAL_TOKEN/);
   assert.match(launcher, /catpaw-gcode-model-gateway/);
   assert.match(launcher, /\["--no-auto-update", \.\.\.process\.argv\.slice\(2\)\]/);
+  assert.match(launcher, /waitForExit/);
   assert.doesNotMatch(launcher, /catpaw-gork-model-gateway|\[gork\]/);
 });
 
