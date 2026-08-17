@@ -13,9 +13,13 @@ readme_url="https://github.com/${repository}#installing-the-released-binary"
 
 download_row() {
     local platform="$1"
-    local archive="$2"
-    if [[ -f "${artifacts_dir}/${archive}" ]]; then
-        printf '| %s | [%s](%s/%s) |\n' "$platform" "$archive" "$release_url" "$archive"
+    local platform_suffix="$2"
+    local matches=("${artifacts_dir}"/*-"${platform_suffix}".tar.gz)
+    if [[ -f "${matches[0]:-}" ]]; then
+        local archive
+        archive="$(basename "${matches[0]}")"
+        printf -- '- **%s:** [Download `%s`](%s/%s)\n' \
+            "$platform" "$archive" "$release_url" "$archive"
     fi
 }
 
@@ -29,9 +33,8 @@ download_row() {
     fi
 
     printf '%s\n\n' '### Download based on your OS'
-    printf '%s\n' '| OS | Download |' '| --- | --- |'
-    download_row 'macOS Apple Silicon' 'gcode-macos-arm64.tar.gz'
-    download_row 'Linux x86_64' 'gcode-linux-x86_64.tar.gz'
+    download_row 'macOS Apple Silicon' 'macos-arm64'
+    download_row 'Linux x86_64' 'linux-x86_64'
     printf '\n%s\n\n' \
         'Each archive has a matching `.sha256` file in the Assets section for verification.'
     printf '%s\n\n' '### Install'
