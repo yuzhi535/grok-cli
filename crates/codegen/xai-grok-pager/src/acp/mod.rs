@@ -587,7 +587,7 @@ pub fn parse_session_recap_available(meta: Option<&acp::Meta>) -> bool {
 
 /// Determine whether interactive login is needed during startup.
 ///
-/// Gork always opens the main welcome screen first. Interactive authentication
+/// Gcode always opens the main welcome screen first. Interactive authentication
 /// remains available through `/login` and `--force-login`, but is never
 /// automatically dispatched merely because `grok.com` is advertised.
 ///

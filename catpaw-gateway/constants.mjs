@@ -81,7 +81,7 @@ export const ATTESTED_MODELS = Object.freeze({
 
 export const DEFAULT_MODEL_ID = 82;
 
-export const GORK_MODEL_PREFIX = "catpaw-";
+export const GCODE_MODEL_PREFIX = "catpaw-";
 
 export function getAttestedModel(modelId) {
   return ATTESTED_MODELS[String(modelId)] ?? null;
@@ -93,14 +93,14 @@ export function attestedModelIds() {
 
 export function getAttestedModelByName(name) {
   const normalized = String(name || "").trim().toLowerCase();
-  const withoutPrefix = normalized.startsWith(GORK_MODEL_PREFIX)
-    ? normalized.slice(GORK_MODEL_PREFIX.length)
+  const withoutPrefix = normalized.startsWith(GCODE_MODEL_PREFIX)
+    ? normalized.slice(GCODE_MODEL_PREFIX.length)
     : normalized;
   return Object.values(ATTESTED_MODELS).find(
     (model) => model.name.toLowerCase() === withoutPrefix || String(model.id) === withoutPrefix,
   ) ?? null;
 }
 
-export function gorkModelName(model) {
-  return `${GORK_MODEL_PREFIX}${model.name}`;
+export function gcodeModelName(model) {
+  return `${GCODE_MODEL_PREFIX}${model.name}`;
 }

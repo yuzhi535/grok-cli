@@ -26,24 +26,24 @@ fn target_dir() -> Result<PathBuf> {
 fn local_pager_binary_path() -> Result<PathBuf> {
     Ok(target_dir()?
         .join("debug")
-        .join(format!("gork{}", std::env::consts::EXE_SUFFIX)))
+        .join(format!("gcode{}", std::env::consts::EXE_SUFFIX)))
 }
 
 fn ensure_local_pager_binary(binary: &std::path::Path) -> Result<()> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cmd = Command::new(&cargo);
     cmd.current_dir(workspace_root()?)
-        .args(["build", "-p", "xai-grok-pager-bin", "--bin", "gork"])
+        .args(["build", "-p", "xai-grok-pager-bin", "--bin", "gcode"])
         .stdin(Stdio::null())
         .envs(xai_tty_utils::pager_env());
     xai_tty_utils::detach_std_command(&mut cmd);
     let output = cmd
         .output()
-        .with_context(|| format!("failed to spawn {cargo} to build gork"))?;
+        .with_context(|| format!("failed to spawn {cargo} to build gcode"))?;
 
     if !output.status.success() {
         bail!(
-            "failed to build gork (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+            "failed to build gcode (exit {:?})\nstdout:\n{}\nstderr:\n{}",
             output.status.code(),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
@@ -51,7 +51,7 @@ fn ensure_local_pager_binary(binary: &std::path::Path) -> Result<()> {
     }
     if !binary.exists() {
         bail!(
-            "gork build completed but binary missing at {}",
+            "gcode build completed but binary missing at {}",
             binary.display()
         );
     }
@@ -62,9 +62,9 @@ fn ensure_local_pager_binary(binary: &std::path::Path) -> Result<()> {
 ///
 /// Resolution order:
 /// 1. `PAGER_BINARY` env var (for CI / explicit override)
-/// 2. `CARGO_BIN_EXE_gork` (set by `cargo test`)
+/// 2. `CARGO_BIN_EXE_gcode` (set by `cargo test`)
 /// 3. Build locally via `cargo build -p xai-grok-pager-bin` (the composition-
-///    root package that owns the `gork` binary)
+///    root package that owns the `gcode` binary)
 pub fn pager_binary() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("PAGER_BINARY") {
         let p = PathBuf::from(path);
@@ -77,8 +77,11 @@ pub fn pager_binary() -> Result<PathBuf> {
             .with_context(|| format!("failed to absolutize PAGER_BINARY: {}", p.display()));
     }
 
-    // Prefer the new binary name; keep the old env var as a fallback for older CI.
-    for key in ["CARGO_BIN_EXE_gork", "CARGO_BIN_EXE_xai-grok-pager"] {
+    for key in [
+        "CARGO_BIN_EXE_gcode",
+        "CARGO_BIN_EXE_gork",
+        "CARGO_BIN_EXE_xai-grok-pager",
+    ] {
         if let Ok(path) = std::env::var(key) {
             let p = PathBuf::from(path);
             if p.exists() {

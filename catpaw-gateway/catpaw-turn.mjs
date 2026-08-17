@@ -3,6 +3,17 @@ import { CATPAW_BASE_URL } from "./constants.mjs";
 
 export const CATPAW_TOOL_VERSION = "2.0.0";
 
+export class CatPawApiError extends Error {
+  constructor(message, { statusCode = 502, providerCode, cause } = {}) {
+    const normalizedStatus = normalizeCatPawStatus(statusCode, message);
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "CatPawApiError";
+    this.statusCode = normalizedStatus;
+    this.providerCode = providerCode;
+    this.retryable = normalizedStatus === 429 || normalizedStatus >= 500;
+  }
+}
+
 export class CatPawTurnClient {
   constructor({ cookie, fetchImpl = fetch, baseUrl = CATPAW_BASE_URL }) {
     this.cookie = cookie;
@@ -38,7 +49,10 @@ export class CatPawTurnClient {
       body: JSON.stringify(request),
     });
     if (!response.ok) {
-      throw new Error(`CatPaw turn returned HTTP ${response.status}: ${await safeResponseText(response)}`);
+      throw new CatPawApiError(
+        `CatPaw turn returned HTTP ${response.status}: ${await safeResponseText(response)}`,
+        { statusCode: response.status },
+      );
     }
     yield* parseSseJson(response.body);
   }
@@ -50,11 +64,21 @@ export class CatPawTurnClient {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new Error(`CatPaw API returned HTTP ${response.status}: ${await safeResponseText(response)}`);
+      throw new CatPawApiError(
+        `CatPaw API returned HTTP ${response.status}: ${await safeResponseText(response)}`,
+        { statusCode: response.status },
+      );
     }
     const payload = await response.json();
     if (payload && typeof payload === "object" && "code" in payload && Number(payload.code) !== 0) {
-      throw new Error(`CatPaw API error ${payload.code}: ${payload.msg || "unknown error"}`);
+      const providerCode = Number(payload.code);
+      throw new CatPawApiError(
+        `CatPaw API error ${payload.code}: ${payload.msg || "unknown error"}`,
+        {
+          statusCode: providerCode >= 400 && providerCode <= 599 ? providerCode : 502,
+          providerCode,
+        },
+      );
     }
     return payload?.data ?? payload;
   }
@@ -66,6 +90,15 @@ export class CatPawTurnClient {
       cookie: this.cookie,
     };
   }
+}
+
+function normalizeCatPawStatus(statusCode, message) {
+  if (statusCode === 400 && isActiveConversationConflict(message)) return 409;
+  return statusCode;
+}
+
+function isActiveConversationConflict(message) {
+  return /会话正在执行中|无法创建新轮次|already (?:running|executing)|conversation (?:is )?in progress/i.test(message);
 }
 
 export function buildTurnRequest({
@@ -81,7 +114,7 @@ export function buildTurnRequest({
     conversationId,
     message,
     modelType: modelId,
-    source: "Gork",
+    source: "Gcode",
     mode: "CLI",
     permissionMode: "default",
     toolVersion: CATPAW_TOOL_VERSION,
@@ -127,7 +160,7 @@ export function toolResultMessage(results, messageId = randomUUID()) {
 export function openAiToolToCatPaw(tool) {
   const fn = tool?.function ?? {};
   if (tool?.type !== "function" || typeof fn.name !== "string" || !fn.name) {
-    throw new Error("Gork sent an unsupported non-function tool");
+    throw new Error("Gcode sent an unsupported non-function tool");
   }
   return {
     name: fn.name,

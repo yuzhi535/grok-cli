@@ -426,11 +426,11 @@ impl WelcomeLayout {
 
 /// Controls what the version badge renders.
 pub(super) enum VersionBadgeMode<'a> {
-    /// Full badge: team | tier | api_key | **Gork** VERSION+channel **Beta** (right-aligned).
+    /// Full badge: team | tier | api_key | **Gcode** VERSION+channel **Beta** (right-aligned).
     Full { subscription_tier: Option<&'a str> },
-    /// Hero footer: team | api_key | Gork Beta [channel] (right-aligned, gray).
+    /// Hero footer: team | api_key | Gcode Beta [channel] (right-aligned, gray).
     HeroFooter,
-    /// Hero inline: **Gork Beta**  VERSION (left-aligned).
+    /// Hero inline: **Gcode Beta**  VERSION (left-aligned).
     HeroInline,
 }
 
@@ -487,7 +487,7 @@ pub(super) fn render_version_badge(
     match &mode {
         VersionBadgeMode::Full { .. } => {
             spans.push(Span::styled(
-                "Gork  ",
+                "Gcode  ",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -507,7 +507,7 @@ pub(super) fn render_version_badge(
         }
         VersionBadgeMode::HeroInline => {
             spans.push(Span::styled(
-                "Gork Beta  ",
+                "Gcode Beta  ",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -783,7 +783,7 @@ pub fn render_welcome(
                 content_area,
                 buf,
                 Some((
-                    "Gork is not yet available for this account.",
+                    "Gcode is not yet available for this account.",
                     theme.gray_bright,
                 )),
                 &menu,
@@ -970,7 +970,7 @@ fn render_welcome_trust(
         // Two lines so the warning never clips at narrow / compact widths
         // (a single ~78-char line would truncate "...posing security risks").
         Line::from(Span::styled(
-            "Gork may run or modify contents in this directory,",
+            "Gcode may run or modify contents in this directory,",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),

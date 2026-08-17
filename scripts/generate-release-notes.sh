@@ -30,8 +30,8 @@ download_row() {
 
     printf '%s\n\n' '### Download based on your OS'
     printf '%s\n' '| OS | Download |' '| --- | --- |'
-    download_row 'macOS Apple Silicon' 'gork-macos-arm64.tar.gz'
-    download_row 'Linux x86_64' 'gork-linux-x86_64.tar.gz'
+    download_row 'macOS Apple Silicon' 'gcode-macos-arm64.tar.gz'
+    download_row 'Linux x86_64' 'gcode-linux-x86_64.tar.gz'
     printf '\n%s\n\n' \
         'Each archive has a matching `.sha256` file in the Assets section for verification.'
     printf '%s\n\n' '### Install'

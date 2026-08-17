@@ -1,11 +1,11 @@
-name: Build & Release Gork (CatPaw)
+name: Build & Release Gcode (CatPaw)
 
 on:
   workflow_dispatch:
   push:
     branches: [catpaw-gork]
     tags:
-      - "gork-v*"
+      - "gcode-v*"
   pull_request:
     branches: [catpaw-gork]
 
@@ -14,7 +14,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: gork
+  BINARY_NAME: gcode
 
 jobs:
   build:
@@ -73,12 +73,12 @@ jobs:
 
       - name: Prepare artifact
         run: |
-          mkdir -p dist/lib/catpaw-gateway dist/share/gork
+          mkdir -p dist/lib/catpaw-gateway dist/share/gcode
           BIN="target/${{ matrix.target }}/release/${BINARY_NAME}"
           cp "$BIN" "dist/${BINARY_NAME}-core"
-          cp catpaw-gateway/gork-launcher.mjs "dist/${BINARY_NAME}"
+          cp catpaw-gateway/gcode-launcher.mjs "dist/${BINARY_NAME}"
           cp catpaw-gateway/*.mjs dist/lib/catpaw-gateway/
-          cp catpaw-gateway/config.toml dist/share/gork/managed_config.toml
+          cp catpaw-gateway/config.toml dist/share/gcode/managed_config.toml
           chmod +x "dist/${BINARY_NAME}"
           # Strip debug symbols for smaller size (best-effort; may no-op for some targets)
           strip "dist/${BINARY_NAME}-core" || true
@@ -87,9 +87,10 @@ jobs:
         run: |
           file "dist/${BINARY_NAME}-core" || true
           node --check "dist/${BINARY_NAME}"
+          node --test catpaw-gateway/test/*.test.mjs
           test_home="$(mktemp -d)"
-          GORK_HOME="$test_home" "./dist/${BINARY_NAME}" --version
-          grep -q 'catpaw-gork-managed' "$test_home/managed_config.toml"
+          GCODE_HOME="$test_home" "./dist/${BINARY_NAME}" --version
+          grep -q 'catpaw-gcode-managed' "$test_home/managed_config.toml"
 
       - name: Create archive
         run: |
@@ -153,7 +154,7 @@ jobs:
 
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "gork ${GITHUB_REF_NAME}" \
+            --title "gcode ${GITHUB_REF_NAME}" \
             --notes "$(<release-notes.md)" \
             --generate-notes \
             "${files[@]}"
@@ -181,14 +182,14 @@ jobs:
         id: version
         run: |
           short_sha="${GITHUB_SHA::7}"
-          tag="gork-v0.0.0-dev.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.${short_sha}"
+          tag="gcode-v0.0.0-dev.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.${short_sha}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
           version_file="crates/codegen/xai-grok-version/Cargo.toml"
           current_version="$(awk -F'"' '/^version = / { print $2; exit }' "$version_file")"
           previous_version="$(git show "${GITHUB_SHA}^1:${version_file}" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }' || true)"
           if [[ -n "$current_version" && "$current_version" != "$previous_version" ]]; then
-            release_tag="gork-v${current_version}-catpaw.${GITHUB_RUN_NUMBER}"
+            release_tag="gcode-v${current_version}-catpaw.${GITHUB_RUN_NUMBER}"
             echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -223,7 +224,7 @@ jobs:
 
           gh release create "${tag}" \
             --repo "${{ github.repository }}" \
-            --title "gork ${tag}" \
+            --title "gcode ${tag}" \
             --notes-file release-notes.md \
             --prerelease \
             --target "${{ github.sha }}" \
@@ -231,7 +232,7 @@ jobs:
 
           echo "✅ Published ${tag} with ${#files[@]} artifact(s)."
 
-      - name: Publish versioned Gork prerelease
+      - name: Publish versioned Gcode prerelease
         if: steps.version.outputs.release_tag != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -246,7 +247,7 @@ jobs:
 
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "gork $RELEASE_TAG" \
+            --title "gcode $RELEASE_TAG" \
             --notes-file version-release-notes.md \
             --prerelease \
             --target "$GITHUB_SHA" \

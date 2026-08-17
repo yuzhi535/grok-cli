@@ -1,4 +1,4 @@
-name: Sync main to CatPaw Gork
+name: Sync main to CatPaw Gcode
 
 on:
   workflow_run:
@@ -58,7 +58,7 @@ jobs:
           SOURCE_BRANCH: main
           TARGET_BRANCH: catpaw-gork
           SYNC_BRANCH_PREFIX: automation/catpaw-gork
-          SYNC_COMMIT_PREFIX: "Sync gcode main into CatPaw Gork"
+          SYNC_COMMIT_PREFIX: "Sync gcode main into CatPaw Gcode"
           REVIEW_REGEX: '^\.github/workflows/build-release\.yml$|^README\.md$|(^|/)(auth|oauth|sampler|acp|updater)(/|\.|$)|(^|/)paths\.rs$|xai-grok-home|xai-grok-pager-bin/Cargo\.toml|pty|test_env'
         run: bash scripts/github/prepare-branch-sync.sh
 
@@ -128,7 +128,7 @@ jobs:
 
           pr_url="$(gh pr list --repo "$GITHUB_REPOSITORY" --base catpaw-gork --head "$SYNC_BRANCH" --state open --json url --jq '.[0].url // empty')"
           if [[ -z "$pr_url" ]]; then
-            pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base catpaw-gork --head "$SYNC_BRANCH" --title "Sync main into CatPaw Gork ${SOURCE_SHA:0:12}" --body-file "$body_file" --label upstream-sync)"
+            pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base catpaw-gork --head "$SYNC_BRANCH" --title "Sync main into CatPaw Gcode ${SOURCE_SHA:0:12}" --body-file "$body_file" --label upstream-sync)"
           fi
 
           if [[ -n "$REVIEW_PATHS" ]]; then
