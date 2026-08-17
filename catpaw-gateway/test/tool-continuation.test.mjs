@@ -145,6 +145,7 @@ function continuationRequest(firstResponse, result) {
     messages: [
       { role: "assistant", tool_calls: firstResponse.choices[0].message.tool_calls },
       { role: "tool", tool_call_id: "call-1", content: result },
+      { role: "user", content: "Continue after the tool result." },
     ],
     tools: tools(),
   };

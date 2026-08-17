@@ -109,10 +109,10 @@ export async function handleChatCompletion({
   const systemPrompt = extractSystemPrompt(body.messages);
   const tools = Array.isArray(body.tools) ? body.tools : [];
   const lastRole = body.messages.at(-1)?.role;
+  const toolResults = extractTrailingToolResults(body.messages);
   let normalized;
-  if (lastRole === "tool") {
-    const results = extractTrailingToolResults(body.messages);
-    const continuationKey = hashContinuation(model.id, results);
+  if (toolResults.length > 0) {
+    const continuationKey = hashContinuation(model.id, toolResults);
     const cached = session.completedContinuations.get(continuationKey);
     if (cached) {
       normalized = cached;
@@ -123,7 +123,7 @@ export async function handleChatCompletion({
           throw httpError(409, "Tool results have no active CatPaw turn");
         }
         session.phase = "continuing";
-        const catpawMessage = toolResultMessage(results);
+        const catpawMessage = toolResultMessage(toolResults);
         continuation = performCatPawTurn({
           session,
           model,
@@ -319,13 +319,13 @@ export function normalizeCatPawSnapshots(events) {
 }
 
 export function extractTrailingToolResults(messages) {
-  const assistant = [...messages].reverse().find((message) => message.role === "assistant");
+  const assistantIndex = messages.findLastIndex((message) => message.role === "assistant");
+  if (assistantIndex < 0) return [];
+  const assistant = messages[assistantIndex];
+  if (!Array.isArray(assistant.tool_calls) || assistant.tool_calls.length === 0) return [];
   const names = new Map((assistant?.tool_calls || []).map((call) => [call.id, call.function?.name]));
-  const trailing = [];
-  for (let index = messages.length - 1; index >= 0 && messages[index].role === "tool"; index -= 1) {
-    trailing.unshift(messages[index]);
-  }
-  return trailing.map((message) => {
+  const results = messages.slice(assistantIndex + 1).filter((message) => message.role === "tool");
+  return results.map((message) => {
     const toolCallId = message.tool_call_id;
     const toolName = names.get(toolCallId);
     if (!toolCallId || !toolName) throw httpError(400, `Cannot resolve tool name for ${toolCallId || "missing tool_call_id"}`);
