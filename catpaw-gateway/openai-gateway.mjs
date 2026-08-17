@@ -69,7 +69,13 @@ export function createOpenAiGateway({
       });
     } catch (error) {
       if (!response.headersSent) {
-        sendOpenAiError(response, error.statusCode || 500, safeError(error), "catpaw_gateway_error");
+        sendOpenAiError(
+          response,
+          error.statusCode || 500,
+          safeError(error),
+          "catpaw_gateway_error",
+          error.shouldRetry === false ? { "x-should-retry": "false" } : undefined,
+        );
       } else {
         response.destroy(error);
       }
@@ -110,9 +116,23 @@ export async function handleChatCompletion({
   const tools = Array.isArray(body.tools) ? body.tools : [];
   const lastRole = body.messages.at(-1)?.role;
   const toolResults = extractTrailingToolResults(body.messages);
+  const continuationKey = toolResults.length > 0 ? hashContinuation(model.id, toolResults) : null;
+  const retiredContinuation = continuationKey
+    ? session.retiredContinuations.get(continuationKey)
+    : null;
+  const requestId = headerValue(request.headers["x-grok-req-id"]);
+  // Gcode keeps this request id for sampler retries and changes it for the
+  // next real user prompt. That lets a new prompt leave a retired CatPaw
+  // conversation even though the old tool result remains in chat history.
+  const recoverOnFreshPrompt = retiredContinuation
+    && lastRole === "user"
+    && requestId
+    && retiredContinuation.requestId
+    && requestId !== retiredContinuation.requestId;
+  if (recoverOnFreshPrompt) session.retiredContinuations.delete(continuationKey);
   let normalized;
-  if (toolResults.length > 0) {
-    const continuationKey = hashContinuation(model.id, toolResults);
+  if (toolResults.length > 0 && !recoverOnFreshPrompt) {
+    if (retiredContinuation) throw retiredContinuation.error;
     const cached = session.completedContinuations.get(continuationKey);
     if (cached) {
       normalized = cached;
@@ -144,8 +164,15 @@ export async function handleChatCompletion({
         rememberContinuation(session, continuationKey, normalized);
       } catch (error) {
         session.phase = "poisoned";
-        sessions.delete(sessionKey);
-        throw error;
+        throw retireContinuation({
+          sessions,
+          sessionKey,
+          session,
+          modelId: model.id,
+          continuationKey,
+          requestId,
+          error,
+        });
       } finally {
         session.inFlightContinuations.delete(continuationKey);
       }
@@ -259,7 +286,39 @@ function createSession(modelId) {
     phase: "idle",
     inFlightContinuations: new Map(),
     completedContinuations: new Map(),
+    retiredContinuations: new Map(),
   };
+}
+
+function retireContinuation({
+  sessions,
+  sessionKey,
+  session,
+  modelId,
+  continuationKey,
+  requestId,
+  error,
+}) {
+  const terminalError = httpError(
+    Number.isInteger(error?.statusCode) ? error.statusCode : 502,
+    `CatPaw tool continuation failed; the upstream turn was retired: ${safeError(error)}`,
+  );
+  // The tool result was already accepted by CatPaw. Repeating the HTTP call
+  // could submit it twice, so preserve the cause but veto Gcode's 5xx retry.
+  terminalError.shouldRetry = false;
+  let freshSession = sessions.get(sessionKey);
+  if (freshSession === session) {
+    freshSession = createSession(modelId);
+    for (const [key, failure] of session.retiredContinuations) {
+      freshSession.retiredContinuations.set(key, failure);
+    }
+    sessions.set(sessionKey, freshSession);
+  }
+  rememberRetiredContinuation(freshSession, continuationKey, {
+    requestId,
+    error: terminalError,
+  });
+  return terminalError;
 }
 
 function hashContinuation(modelId, results) {
@@ -273,6 +332,18 @@ function rememberContinuation(session, key, normalized) {
   if (session.completedContinuations.size > 32) {
     session.completedContinuations.delete(session.completedContinuations.keys().next().value);
   }
+}
+
+function rememberRetiredContinuation(session, key, failure) {
+  session.retiredContinuations.set(key, failure);
+  if (session.retiredContinuations.size > 32) {
+    session.retiredContinuations.delete(session.retiredContinuations.keys().next().value);
+  }
+}
+
+function headerValue(value) {
+  if (Array.isArray(value)) return value[0];
+  return typeof value === "string" && value ? value : undefined;
 }
 
 export function normalizeCatPawSnapshots(events) {
@@ -453,13 +524,16 @@ function writeSse(response, value) {
   response.write(`data: ${JSON.stringify(value)}\n\n`);
 }
 
-function sendJson(response, status, value) {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+function sendJson(response, status, value, headers = undefined) {
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    ...headers,
+  });
   response.end(`${JSON.stringify(value)}\n`);
 }
 
-function sendOpenAiError(response, status, message, code) {
-  sendJson(response, status, { error: { message, type: "invalid_request_error", code } });
+function sendOpenAiError(response, status, message, code, headers = undefined) {
+  sendJson(response, status, { error: { message, type: "invalid_request_error", code } }, headers);
 }
 
 async function readJsonBody(request) {
