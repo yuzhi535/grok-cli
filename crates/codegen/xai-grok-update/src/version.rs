@@ -250,8 +250,14 @@ async fn fetch_gh_release_latest(exclude_pre: bool) -> Result<String> {
     }
 
     let tag = String::from_utf8(output.stdout)?.trim().to_string();
-    // Tags are formatted as "v0.1.141", strip the leading "v"
-    let version = tag.strip_prefix('v').unwrap_or(&tag).to_string();
+    // Gcode releases use `gcode-v*`; accept the old fork and upstream forms so
+    // existing channels remain readable during the rename.
+    let version = tag
+        .strip_prefix("gcode-v")
+        .or_else(|| tag.strip_prefix("gork-v"))
+        .or_else(|| tag.strip_prefix('v'))
+        .unwrap_or(&tag)
+        .to_string();
     if version.is_empty() {
         anyhow::bail!("No releases found in {}", GH_RELEASE_REPO);
     }

@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import http from "node:http";
 import { appendAttestationAudit, attestConversationModel } from "./attestation.mjs";
 import { loadCatPawAuth } from "./auth.mjs";
 import {
   buildTurnRequest,
+  CatPawApiError,
   CatPawTurnClient,
   toolResultMessage,
   userMessage,
@@ -12,12 +13,12 @@ import {
   ATTESTED_MODELS,
   CATPAW_CLI_VERSION,
   getAttestedModelByName,
-  gorkModelName,
+  gcodeModelName,
 } from "./constants.mjs";
 
 export async function startOpenAiGateway({
-  host = process.env.CATPAW_GORK_HOST || "127.0.0.1",
-  port = Number(process.env.CATPAW_GORK_PORT || 18765),
+  host = process.env.CATPAW_GCODE_HOST || process.env.CATPAW_GORK_HOST || "127.0.0.1",
+  port = Number(process.env.CATPAW_GCODE_PORT || process.env.CATPAW_GORK_PORT || 18765),
   env = process.env,
   fetchImpl = fetch,
   output = process.stderr,
@@ -30,7 +31,7 @@ export async function startOpenAiGateway({
     gateway.listen(port, host, resolve);
   });
   const address = gateway.address();
-  output.write(`[catpaw-gork] model gateway listening on http://${host}:${address.port}/v1\n`);
+  output.write(`[catpaw-gcode] model gateway listening on http://${host}:${address.port}/v1\n`);
   return gateway;
 }
 
@@ -46,7 +47,7 @@ export function createOpenAiGateway({
     try {
       const url = new URL(request.url || "/", "http://localhost");
       if (request.method === "GET" && url.pathname === "/health") {
-        return sendJson(response, 200, { ok: true, service: "catpaw-gork-model-gateway" });
+        return sendJson(response, 200, { ok: true, service: "catpaw-gcode-model-gateway" });
       }
       if (request.method === "GET" && url.pathname === "/v1/models") {
         return sendJson(response, 200, modelCatalog());
@@ -98,25 +99,64 @@ export async function handleChatCompletion({
     || randomUUID();
   let session = sessions.get(sessionKey);
   if (!session) {
-    session = { conversationId: randomUUID(), modelId: model.id, active: false };
+    session = createSession(model.id);
     sessions.set(sessionKey, session);
   }
-  if (session.modelId !== model.id && session.active) {
+  if (session.modelId !== model.id && session.phase !== "idle") {
     throw httpError(409, "Cannot switch CatPaw models while a tool call is active");
   }
-  session.modelId = model.id;
 
   const systemPrompt = extractSystemPrompt(body.messages);
   const tools = Array.isArray(body.tools) ? body.tools : [];
   const lastRole = body.messages.at(-1)?.role;
-  let catpawMessage;
+  let normalized;
   if (lastRole === "tool") {
-    if (!session.active) throw httpError(409, "Tool results have no active CatPaw turn");
-    catpawMessage = toolResultMessage(extractTrailingToolResults(body.messages));
-    await client.submitToolResults(session.conversationId, catpawMessage);
+    const results = extractTrailingToolResults(body.messages);
+    const continuationKey = hashContinuation(model.id, results);
+    const cached = session.completedContinuations.get(continuationKey);
+    if (cached) {
+      normalized = cached;
+    } else {
+      let continuation = session.inFlightContinuations.get(continuationKey);
+      if (!continuation) {
+        if (session.phase !== "awaiting_tools") {
+          throw httpError(409, "Tool results have no active CatPaw turn");
+        }
+        session.phase = "continuing";
+        const catpawMessage = toolResultMessage(results);
+        continuation = performCatPawTurn({
+          session,
+          model,
+          catpawMessage,
+          request,
+          tools,
+          systemPrompt,
+          client,
+          cookie,
+          env,
+          attest,
+          appendAudit,
+        });
+        session.inFlightContinuations.set(continuationKey, continuation);
+      }
+      try {
+        normalized = await continuation;
+        rememberContinuation(session, continuationKey, normalized);
+      } catch (error) {
+        session.phase = "poisoned";
+        sessions.delete(sessionKey);
+        throw error;
+      } finally {
+        session.inFlightContinuations.delete(continuationKey);
+      }
+    }
   } else if (lastRole === "user") {
+    if (session.phase !== "idle") {
+      throw httpError(409, "Cannot start a new CatPaw round while tool continuation is active");
+    }
+    session.modelId = model.id;
     const text = messageText(body.messages.at(-1)?.content);
-    catpawMessage = userMessage(text);
+    const catpawMessage = userMessage(text);
     const roundRequest = buildTurnRequest({
       conversationId: session.conversationId,
       modelId: model.id,
@@ -125,12 +165,50 @@ export async function handleChatCompletion({
       systemPrompt,
       cwd: request.headers["x-grok-cwd"],
     });
-    await client.startRound(roundRequest);
-    session.active = true;
+    session.phase = "continuing";
+    try {
+      await client.startRound(roundRequest);
+      normalized = await performCatPawTurn({
+        session,
+        model,
+        catpawMessage,
+        request,
+        tools,
+        systemPrompt,
+        client,
+        cookie,
+        env,
+        attest,
+        appendAudit,
+      });
+    } catch (error) {
+      session.phase = "poisoned";
+      sessions.delete(sessionKey);
+      throw error;
+    }
   } else {
     throw httpError(400, `Unsupported final message role: ${lastRole || "missing"}`);
   }
 
+  sendNormalizedResponse(response, normalized, model, body);
+}
+
+async function performCatPawTurn({
+  session,
+  model,
+  catpawMessage,
+  request,
+  tools,
+  systemPrompt,
+  client,
+  cookie,
+  env,
+  attest,
+  appendAudit,
+}) {
+  if (catpawMessage.type === "tool") {
+    await client.submitToolResults(session.conversationId, catpawMessage);
+  }
   const turnRequest = buildTurnRequest({
     conversationId: session.conversationId,
     modelId: model.id,
@@ -141,28 +219,59 @@ export async function handleChatCompletion({
   });
   const upstreamEvents = [];
   for await (const event of client.turn(turnRequest)) {
-    if (event?.error) throw httpError(event.error.httpStatus || 502, event.error.message || "CatPaw turn failed");
+    if (event?.error) {
+      throw new CatPawApiError(event.error.message || "CatPaw turn failed", {
+        statusCode: event.error.httpStatus || 502,
+        providerCode: event.error.code,
+      });
+    }
     upstreamEvents.push(event);
   }
   const normalized = normalizeCatPawSnapshots(upstreamEvents);
 
-  const attestationMode = env.CATPAW_GORK_ATTESTATION || "strict";
+  const attestationMode = env.CATPAW_GCODE_ATTESTATION || env.CATPAW_GORK_ATTESTATION || "strict";
   if (attestationMode !== "off") {
     const verified = await attest({
       cookie,
       conversationId: session.conversationId,
       requestedModelId: model.id,
     });
-    await appendAudit({ ...verified, catpawCliVersion: CATPAW_CLI_VERSION, surface: "gork-model-gateway" });
+    await appendAudit({ ...verified, catpawCliVersion: CATPAW_CLI_VERSION, surface: "gcode-model-gateway" });
   }
 
-  session.active = normalized.toolCalls.length > 0;
-  if (!session.active) await client.setConversationStatus(session.conversationId, "completed");
+  session.phase = normalized.toolCalls.length > 0 ? "awaiting_tools" : "idle";
+  if (session.phase === "idle") await client.setConversationStatus(session.conversationId, "completed");
+  return normalized;
+}
 
+function sendNormalizedResponse(response, normalized, model, body) {
   if (body.stream === true) {
     streamOpenAiResponse(response, normalized, model, body);
   } else {
     sendJson(response, 200, completionResponse(normalized, model));
+  }
+}
+
+function createSession(modelId) {
+  return {
+    conversationId: randomUUID(),
+    modelId,
+    phase: "idle",
+    inFlightContinuations: new Map(),
+    completedContinuations: new Map(),
+  };
+}
+
+function hashContinuation(modelId, results) {
+  return createHash("sha256")
+    .update(JSON.stringify({ modelId, results }))
+    .digest("hex");
+}
+
+function rememberContinuation(session, key, normalized) {
+  session.completedContinuations.set(key, normalized);
+  if (session.completedContinuations.size > 32) {
+    session.completedContinuations.delete(session.completedContinuations.keys().next().value);
   }
 }
 
@@ -266,7 +375,7 @@ function completionResponse(normalized, model) {
     id: normalized.messageId,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
-    model: gorkModelName(model),
+    model: gcodeModelName(model),
     choices: [{
       index: 0,
       finish_reason: normalized.toolCalls.length ? "tool_calls" : "stop",
@@ -290,7 +399,7 @@ function modelCatalog() {
   return {
     object: "list",
     data: Object.values(ATTESTED_MODELS).map((model) => ({
-      id: gorkModelName(model),
+      id: gcodeModelName(model),
       object: "model",
       created: 0,
       owned_by: "catpaw",

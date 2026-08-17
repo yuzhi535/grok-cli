@@ -10,21 +10,21 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// Canonical gork application path under the configured home directory.
+/// Canonical Gcode application path under the configured home directory.
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }
 
-/// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
+/// [`grok_application`] under an explicit home instead of `$GCODE_HOME`.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    let name = if cfg!(windows) { "gork.exe" } else { "gork" };
+    let name = if cfg!(windows) { "gcode.exe" } else { "gcode" };
     home.join("bin").join(name)
 }
 
-/// System-wide config directory: `/etc/gork/` on Unix, `None` on Windows.
+/// System-wide config directory: `/etc/gcode/` on Unix, `None` on Windows.
 pub fn system_config_dir() -> Option<PathBuf> {
     if cfg!(unix) {
-        Some(PathBuf::from("/etc/gork"))
+        Some(PathBuf::from("/etc/gcode"))
     } else {
         None
     }

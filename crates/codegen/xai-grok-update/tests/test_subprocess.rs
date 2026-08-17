@@ -330,7 +330,7 @@ async fn install_npm_no_token_no_userconfig() {
 async fn fetch_gh_release_stable_returns_tag_stripped() {
     let g = FakeBinGuard::install_gh();
     // For stable channel, only the `--exclude-pre-releases` invocation is made.
-    g.set_stable_only_stdout("v0.1.181\n");
+    g.set_stable_only_stdout("gcode-v0.1.181\n");
 
     let v = fetch_gh_release_version("stable").await.unwrap();
     assert_eq!(v, "0.1.181");
@@ -342,6 +342,16 @@ async fn fetch_gh_release_stable_returns_tag_stripped() {
         "args: {}",
         log[0]
     );
+}
+
+#[tokio::test]
+#[serial]
+async fn fetch_gh_release_stable_accepts_legacy_gork_tag() {
+    let g = FakeBinGuard::install_gh();
+    g.set_stable_only_stdout("gork-v0.1.180\n");
+
+    let v = fetch_gh_release_version("stable").await.unwrap();
+    assert_eq!(v, "0.1.180");
 }
 
 #[tokio::test]
@@ -411,7 +421,7 @@ async fn fetch_gh_release_passes_repo_flag() {
     let _ = fetch_gh_release_version("stable").await.unwrap();
     let log = g.args_log();
     assert!(log[0].contains("--repo"), "args: {}", log[0]);
-    assert!(log[0].contains("yuzhi535/gork"), "args: {}", log[0]);
+    assert!(log[0].contains("yuzhi535/gcode"), "args: {}", log[0]);
 }
 
 #[tokio::test]

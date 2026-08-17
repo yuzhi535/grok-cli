@@ -81,7 +81,7 @@ fn target_dir() -> PathBuf {
 fn local_grok_binary_path() -> PathBuf {
     target_dir()
         .join("debug")
-        .join(format!("gork{}", std::env::consts::EXE_SUFFIX))
+        .join(format!("gcode{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn ensure_local_grok_binary(binary: &Path) {
@@ -92,40 +92,48 @@ fn ensure_local_grok_binary(binary: &Path) {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let mut cmd = Command::new(&cargo);
     cmd.current_dir(workspace_root())
-        .args(["build", "-p", "xai-grok-pager-bin", "--bin", "gork"])
+        .args(["build", "-p", "xai-grok-pager-bin", "--bin", "gcode"])
         .stdin(std::process::Stdio::null())
         .envs(xai_tty_utils::pager_env());
     xai_tty_utils::detach_std_command(&mut cmd);
     let output = cmd
         .output()
-        .unwrap_or_else(|e| panic!("failed to spawn {cargo} to build gork: {e}"));
+        .unwrap_or_else(|e| panic!("failed to spawn {cargo} to build gcode: {e}"));
 
     assert!(
         output.status.success(),
-        "failed to build gork for lifecycle tests (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        "failed to build gcode for lifecycle tests (exit {:?})\nstdout:\n{}\nstderr:\n{}",
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(
         binary.exists(),
-        "gork build completed but binary missing at {}",
+        "gcode build completed but binary missing at {}",
         binary.display()
     );
 }
 
-/// Resolve gork binary: `GROK_BINARY` env (CI) or a locally built `gork` binary.
+/// Resolve the Gcode binary from `GCODE_BINARY`, legacy `GROK_BINARY`, or a local build.
 pub fn grok_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("GROK_BINARY") {
+    if let Ok(path) = std::env::var("GCODE_BINARY") {
         let p = PathBuf::from(path);
-        assert!(p.exists(), "GROK_BINARY does not exist: {}", p.display());
+        assert!(p.exists(), "GCODE_BINARY does not exist: {}", p.display());
         // Bazel's GROK_BINARY is runfiles-relative; the harness spawns the child
         // with a different cwd, so absolutize against the (runfiles-root) cwd now.
         return std::path::absolute(&p).unwrap_or(p);
     }
+    if let Ok(path) = std::env::var("GROK_BINARY") {
+        let p = PathBuf::from(path);
+        assert!(p.exists(), "GROK_BINARY does not exist: {}", p.display());
+        return std::path::absolute(&p).unwrap_or(p);
+    }
 
-    // Prefer the new binary name; keep the old env var as a fallback for older CI.
-    for key in ["CARGO_BIN_EXE_gork", "CARGO_BIN_EXE_xai-grok-pager"] {
+    for key in [
+        "CARGO_BIN_EXE_gcode",
+        "CARGO_BIN_EXE_gork",
+        "CARGO_BIN_EXE_xai-grok-pager",
+    ] {
         if let Ok(path) = std::env::var(key) {
             let p = PathBuf::from(path);
             if p.exists() {

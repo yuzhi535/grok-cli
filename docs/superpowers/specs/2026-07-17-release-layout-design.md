@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make each gork GitHub Release immediately actionable: a visitor should identify
+Make each Gcode GitHub Release immediately actionable: a visitor should identify
 their platform and download the correct binary without decoding asset names.
 
 ## Release body
@@ -14,8 +14,8 @@ Both version tags and the rolling `latest` release will use the same layout:
    `latest` identifies the source commit.
 3. A `Download based on your OS` table with one prominent asset link per
    supported platform:
-   - macOS Apple Silicon → `gork-macos-arm64.tar.gz`
-   - Linux x86_64 → `gork-linux-x86_64.tar.gz`
+   - macOS Apple Silicon → `gcode-macos-arm64.tar.gz`
+   - Linux x86_64 → `gcode-linux-x86_64.tar.gz`
 4. An installation hint that points users to the README for the complete
    commands. GitHub's native Assets section remains the complete source of
    release files.
