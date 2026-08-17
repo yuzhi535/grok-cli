@@ -171,7 +171,12 @@ pub fn build_auth_methods(inputs: AuthMethodsBuildInputs<'_>) -> BuiltAuthMethod
         preferred_method,
     } = inputs;
 
-    if has_openai_codex_provider {
+    // A provider-backed model elsewhere in the merged catalog must not erase
+    // a usable per-model BYOK credential. This matters for managed launchers:
+    // their CatPaw model uses env_key while the user's config may also contain
+    // dormant OpenAI Codex models. With BYOK available, install xai.api_key so
+    // session creation can proceed without an unrelated interactive login.
+    if has_openai_codex_provider && !has_external_api_key {
         return BuiltAuthMethods {
             methods: vec![openai_codex_auth_method()],
             default_auth_method_id: None,
@@ -802,6 +807,20 @@ mod tests {
         assert_eq!(default_id(&built), None);
         assert!(AuthMethodKind::from_id(&built.methods[0].id()).needs_interactive_login());
         assert_eq!(built.methods[0].name(), "ChatGPT (gcode)");
+    }
+
+    #[test]
+    fn byok_wins_over_unrelated_openai_codex_catalog_entry() {
+        let built = build_auth_methods(AuthMethodsBuildInputs {
+            has_external_api_key: true,
+            has_openai_codex_provider: true,
+            ..default_inputs()
+        });
+        assert_eq!(
+            method_ids(&built),
+            vec![XAI_API_KEY_METHOD_ID, GROK_COM_METHOD_ID]
+        );
+        assert_eq!(default_id(&built), Some(XAI_API_KEY_METHOD_ID));
     }
 
     // ── End-to-end: enterprise TOML -> resolved models -> build_auth_methods ─
