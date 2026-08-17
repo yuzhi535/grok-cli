@@ -2214,8 +2214,9 @@ async fn async_main(args: PagerArgs) -> Result<()> {
     type UpdateWaitHandle = tokio::task::JoinHandle<std::io::Result<std::process::ExitStatus>>;
     let bg_update_wait: std::sync::Arc<tokio::sync::Mutex<Option<UpdateWaitHandle>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(None));
+    let updates_enabled = should_check_for_updates(args.no_auto_update);
     let bg_update_rx: Option<tokio::sync::oneshot::Receiver<Option<auto_update::UpdateAvailable>>> =
-        if should_check_for_updates(args.no_auto_update) {
+        if updates_enabled {
             let update_config = update_config.clone();
             let wait_slot = bg_update_wait.clone();
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -2234,17 +2235,26 @@ async fn async_main(args: PagerArgs) -> Result<()> {
     xai_grok_sandbox::flush();
     match result {
         Ok(true) => {
+            if !should_run_embedded_update_on_exit(true, updates_enabled) {
+                eprintln!(
+                    "Gcode updates are managed by `gcode update`; the embedded Grok updater is disabled."
+                );
+                return Ok(());
+            }
             let adopted = bg_update_wait.lock().await.take();
             if finish_update_on_exit(adopted, &update_config).await {
-                eprintln!("Update installed. Run `grok` to start.");
+                eprintln!("Update installed. Run `gcode` to start.");
             } else {
-                eprintln!("Update did not complete. Run `grok update` to retry.");
+                eprintln!("Update did not complete. Run `gcode update` to retry.");
             }
             Ok(())
         }
         Ok(false) => Ok(()),
         Err(e) => Err(e),
     }
+}
+fn should_run_embedded_update_on_exit(update_requested: bool, updates_enabled: bool) -> bool {
+    update_requested && updates_enabled
 }
 /// Complete the update after a quit-for-update (Ctrl+U) exit. Returns `true`
 /// when an update path completed without a reported failure.
@@ -2619,6 +2629,12 @@ mod tests {
             subcommand.command,
             Some(Command::Version { json: false })
         ));
+    }
+    #[test]
+    fn no_auto_update_blocks_the_exit_time_updater_too() {
+        assert!(!should_run_embedded_update_on_exit(true, false));
+        assert!(!should_run_embedded_update_on_exit(false, true));
+        assert!(should_run_embedded_update_on_exit(true, true));
     }
     #[cfg(all(feature = "jemalloc", unix))]
     struct TempHeapDump(std::path::PathBuf);
