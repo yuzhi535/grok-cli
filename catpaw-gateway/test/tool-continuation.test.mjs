@@ -64,6 +64,62 @@ test("a failed tool continuation is retired before Gcode retries it", async (t) 
   assert.notEqual(roundConversationIds[0], roundConversationIds[1]);
 });
 
+test("a retryable continuation failure keeps its cause and recovers on the next user prompt", async (t) => {
+  const roundConversationIds = [];
+  let submitCount = 0;
+  let turnCount = 0;
+  const client = {
+    async startRound(request) { roundConversationIds.push(request.conversationId); },
+    async submitToolResults() { submitCount += 1; },
+    async setConversationStatus() {},
+    async *turn() {
+      turnCount += 1;
+      if (turnCount === 1) {
+        yield snapshot([{ type: "tool_use", toolCallId: "call-1", toolName: "write_file", toolParams: "{}" }]);
+        return;
+      }
+      if (turnCount === 2) {
+        const error = new Error("模型响应无效：既无工具调用也无内容");
+        error.statusCode = 502;
+        throw error;
+      }
+      yield snapshot([{ type: "text", text: "recovered conversation", reasoningContent: "" }]);
+    },
+  };
+  const { base, headers } = await startGateway(t, client, "retry-session");
+  const firstHeaders = { ...headers, "x-grok-req-id": "prompt-1" };
+  const first = await postCompletion(base, firstHeaders, userRequest("write a file"));
+  const continuation = continuationRequest(first.body, "done");
+
+  const failed = await postCompletion(base, firstHeaders, continuation);
+  assert.equal(failed.status, 502, "the original provider status must remain visible");
+  assert.equal(failed.shouldRetry, "false", "Gcode must not retry an already-submitted tool result");
+  assert.match(failed.body.error.message, /模型响应无效：既无工具调用也无内容/);
+
+  const replayed = await postCompletion(base, firstHeaders, continuation);
+  assert.equal(replayed.status, 502);
+  assert.equal(replayed.shouldRetry, "false");
+  assert.equal(replayed.body.error.message, failed.body.error.message);
+  assert.equal(submitCount, 1, "the same tool result must never be submitted twice");
+  assert.equal(turnCount, 2, "a transport retry must not start another upstream turn");
+
+  const recovered = await postCompletion(base, {
+    ...headers,
+    "x-grok-req-id": "prompt-2",
+  }, {
+    ...continuation,
+    messages: [
+      ...continuation.messages,
+      { role: "user", content: "continue in a fresh conversation" },
+    ],
+  });
+  assert.equal(recovered.status, 200);
+  assert.equal(recovered.body.choices[0].message.content, "recovered conversation");
+  assert.equal(turnCount, 3);
+  assert.equal(roundConversationIds.length, 2);
+  assert.notEqual(roundConversationIds[0], roundConversationIds[1]);
+});
+
 test("duplicate tool continuations share and replay one upstream request", async (t) => {
   let submitCount = 0;
   let turnCount = 0;
@@ -128,7 +184,11 @@ async function postCompletion(base, headers, body) {
     headers,
     body: JSON.stringify(body),
   });
-  return { status: response.status, body: await response.json() };
+  return {
+    status: response.status,
+    shouldRetry: response.headers.get("x-should-retry"),
+    body: await response.json(),
+  };
 }
 
 function userRequest(content) {
