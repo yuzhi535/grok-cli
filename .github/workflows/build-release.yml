@@ -17,8 +17,45 @@ env:
   BINARY_NAME: gcode
 
 jobs:
+  release-version:
+    name: Derive Gcode release identity
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Derive release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF" == refs/tags/gcode-v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            version="${tag#gcode-v}"
+          else
+            version_file="crates/codegen/xai-grok-version/Cargo.toml"
+            upstream_version="$(awk -F'"' '/^version = / { print $2; exit }' "$version_file")"
+            core_version="${upstream_version%%-*}"
+            IFS=. read -r major minor patch <<< "$core_version"
+            version="${major}.${minor}.$((patch + 1))-gcode.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+            tag="gcode-v${version}"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid Gcode release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.pretty_name }})
+    needs: release-version
     strategy:
       fail-fast: false
       matrix:
@@ -68,6 +105,8 @@ jobs:
           fi
 
       - name: Build release binary
+        env:
+          GROK_VERSION: ${{ needs.release-version.outputs.version }}
         run: |
           cargo build -p xai-grok-pager-bin --release --target ${{ matrix.target }}
 
@@ -77,8 +116,17 @@ jobs:
           BIN="target/${{ matrix.target }}/release/${BINARY_NAME}"
           cp "$BIN" "dist/${BINARY_NAME}-core"
           cp catpaw-gateway/gcode-launcher.mjs "dist/${BINARY_NAME}"
+          cp catpaw-gateway/gcode-update.mjs dist/gcode-update.mjs
           cp catpaw-gateway/*.mjs dist/lib/catpaw-gateway/
           cp catpaw-gateway/config.toml dist/share/gcode/managed_config.toml
+          cat > dist/share/gcode/release.json <<JSON
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "tag": "${{ needs.release-version.outputs.tag }}",
+            "version": "${{ needs.release-version.outputs.version }}",
+            "commit": "${GITHUB_SHA}"
+          }
+          JSON
           chmod +x "dist/${BINARY_NAME}"
           # Strip debug symbols for smaller size (best-effort; may no-op for some targets)
           strip "dist/${BINARY_NAME}-core" || true
@@ -87,10 +135,13 @@ jobs:
         run: |
           file "dist/${BINARY_NAME}-core" || true
           node --check "dist/${BINARY_NAME}"
+          node --check dist/gcode-update.mjs
           node --test catpaw-gateway/test/*.test.mjs
           test_home="$(mktemp -d)"
           GCODE_HOME="$test_home" "./dist/${BINARY_NAME}" --version
+          GCODE_HOME="$test_home" "./dist/${BINARY_NAME}" --version | grep -q '^gcode ${{ needs.release-version.outputs.version }} ('
           grep -q 'catpaw-gcode-managed' "$test_home/managed_config.toml"
+          grep -q '"repository": "yuzhi535/gcode"' dist/share/gcode/release.json
 
       - name: Create archive
         run: |
@@ -118,7 +169,7 @@ jobs:
   publish-tag-release:
     name: Publish tagged Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [release-version, build]
     permissions:
       contents: write
     if: >
@@ -152,7 +203,7 @@ jobs:
           bash scripts/generate-release-notes.sh \
             "${GITHUB_REF_NAME}" "${GITHUB_SHA}" "${GITHUB_REPOSITORY}" artifacts release-notes.md
 
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "${{ needs.release-version.outputs.tag }}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "gcode ${GITHUB_REF_NAME}" \
             --notes "$(<release-notes.md)" \
@@ -164,7 +215,7 @@ jobs:
   publish-main-prerelease:
     name: Publish immutable prerelease (catpaw-gork)
     runs-on: ubuntu-latest
-    needs: build
+    needs: [release-version, build]
     permissions:
       contents: write
     if: >
@@ -175,23 +226,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Derive immutable prerelease version
-        id: version
-        run: |
-          short_sha="${GITHUB_SHA::7}"
-          tag="gcode-v0.0.0-dev.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.${short_sha}"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-
-          version_file="crates/codegen/xai-grok-version/Cargo.toml"
-          current_version="$(awk -F'"' '/^version = / { print $2; exit }' "$version_file")"
-          previous_version="$(git show "${GITHUB_SHA}^1:${version_file}" 2>/dev/null | awk -F'"' '/^version = / { print $2; exit }' || true)"
-          if [[ -n "$current_version" && "$current_version" != "$previous_version" ]]; then
-            release_tag="gcode-v${current_version}-catpaw.${GITHUB_RUN_NUMBER}"
-            echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -216,7 +250,7 @@ jobs:
           echo "Found ${#files[@]} artifact(s):"
           ls -lh "${files[@]}"
 
-          tag="${{ steps.version.outputs.tag }}"
+          tag="${{ needs.release-version.outputs.tag }}"
           echo "Publishing immutable prerelease ${tag}..."
 
           bash scripts/generate-release-notes.sh \
@@ -231,24 +265,3 @@ jobs:
             "${files[@]}"
 
           echo "✅ Published ${tag} with ${#files[@]} artifact(s)."
-
-      - name: Publish versioned Gcode prerelease
-        if: steps.version.outputs.release_tag != ''
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=(artifacts/${BINARY_NAME}-*.tar.gz artifacts/${BINARY_NAME}-*.tar.gz.sha256)
-
-          bash scripts/generate-release-notes.sh \
-            "$RELEASE_TAG" "$GITHUB_SHA" "$GITHUB_REPOSITORY" artifacts version-release-notes.md
-
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "gcode $RELEASE_TAG" \
-            --notes-file version-release-notes.md \
-            --prerelease \
-            --target "$GITHUB_SHA" \
-            "${files[@]}"
