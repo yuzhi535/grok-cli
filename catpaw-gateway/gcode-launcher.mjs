@@ -5,6 +5,7 @@ import { access, copyFile, mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isGcodeUpdateCommand, runGcodeUpdate } from "./gcode-update.mjs";
 
 const launcherPath = await realpath(fileURLToPath(import.meta.url));
 const installRoot = path.dirname(launcherPath);
@@ -23,6 +24,15 @@ await requireReadable(core, "Gcode core binary");
 await requireReadable(packagedConfig, "CatPaw model config");
 await requireReadable(gatewayEntry, "CatPaw model gateway");
 await installManagedConfig();
+
+if (isGcodeUpdateCommand(process.argv.slice(2))) {
+  try {
+    await runGcodeUpdate({ args: process.argv.slice(2), installRoot });
+  } catch (error) {
+    fail(error.message);
+  }
+  process.exit(0);
+}
 
 const childEnv = {
   ...process.env,
@@ -46,7 +56,10 @@ if (!isOfflineCommand(process.argv.slice(2))) {
   }
 }
 
-const coreProcess = spawn(core, process.argv.slice(2), { env: childEnv, stdio: "inherit" });
+// The Gcode distribution updates as one GitHub release (launcher + core +
+// gateway + config). Never let the embedded upstream core update itself from
+// the Grok npm/x.ai/GCS channels.
+const coreProcess = spawn(core, ["--no-auto-update", ...process.argv.slice(2)], { env: childEnv, stdio: "inherit" });
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => coreProcess.kill(signal));
 }

@@ -107,6 +107,22 @@ https://github.com/yuzhi535/gcode/releases/download/gcode-v0.1.0/gcode-macos-arm
 
 也可以在 Releases 页面手动下载：https://github.com/yuzhi535/gcode/releases
 
+### 通过 Gcode 渠道升级
+
+```sh
+gcode update --check
+gcode update
+```
+
+每个 GitHub 构建都会把唯一的 Gcode release 版本写入发布包。更新器只读取
+`yuzhi535/gcode` 的 GitHub Releases，下载整个平台包，校验随包发布的
+SHA-256，运行 smoke test 后再原子切换 `~/.local/bin/gcode`。它不会查询
+Grok 的 npm、x.ai 或 GCS 更新渠道。
+
+Gcode 发布包关闭了原版 core-only 自动更新，因为只替换 Rust core 会导致
+launcher、CatPaw gateway 和模型配置版本不一致。需要升级时使用上面的
+`gcode update`，整套组件会一起升级。
+
 ### 官方原版
 
 如需 SpaceXAI 官方构建（二进制名为 `grok`）：

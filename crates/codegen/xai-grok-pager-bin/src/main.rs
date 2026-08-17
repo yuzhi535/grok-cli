@@ -1104,11 +1104,8 @@ async fn run_agent_command(
     let is_leader = matches!(agent_args.mode, Some(AgentCmd::Leader(_)));
     if !is_stdio && !is_leader {
         eprintln!(
-            "Grok Build (pager) - v{}",
-            xai_grok_version::display_version_with_commit(
-                env!("VERSION_WITH_COMMIT"),
-                xai_grok_update::channel_label(),
-            )
+            "Gcode (pager) - v{}",
+            xai_grok_version::display_version_with_commit(env!("VERSION_WITH_COMMIT"), "")
         );
         if should_check_for_updates(no_auto_update) {
             auto_update::run_update_if_available(
@@ -1785,26 +1782,20 @@ fn install_heap_profile_hooks() {
         prof_available: jemalloc_prof_available,
     });
 }
-fn version_text(channel_label: &str) -> String {
+fn version_text() -> String {
     format!(
-        "grok {}\n",
-        xai_grok_version::display_version_with_commit(
-            xai_grok_version::full_version(),
-            channel_label,
-        )
+        "gcode {}\n",
+        xai_grok_version::display_version_with_commit(xai_grok_version::full_version(), "")
     )
 }
-fn write_version(writer: &mut impl std::io::Write, channel_label: &str) -> std::io::Result<()> {
-    writer.write_all(version_text(channel_label).as_bytes())
+fn write_version(writer: &mut impl std::io::Write) -> std::io::Result<()> {
+    writer.write_all(version_text().as_bytes())
 }
 fn dispatch_version_if_requested(args: &PagerArgs) -> bool {
     if !args.version {
         return false;
     }
-    if let Err(error) = write_version(
-        &mut std::io::stdout().lock(),
-        xai_grok_update::channel_label(),
-    ) {
+    if let Err(error) = write_version(&mut std::io::stdout().lock()) {
         eprintln!("Error: {error}");
         std::process::exit(1);
     }
@@ -1982,14 +1973,11 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 if json {
                     let payload = serde_json::json!({
                         "currentVersion": env!("VERSION_WITH_COMMIT"),
-                        "channel": xai_grok_update::channel_name().unwrap_or("unknown"),
+                        "channel": "gcode",
                     });
                     println!("{}", serde_json::to_string(&payload)?);
                 } else {
-                    write_version(
-                        &mut std::io::stdout().lock(),
-                        xai_grok_update::channel_label(),
-                    )?;
+                    write_version(&mut std::io::stdout().lock())?;
                 }
                 return Ok(());
             }
@@ -2606,20 +2594,16 @@ mod tests {
         );
     }
     #[test]
-    fn version_output_writer_preserves_channel_aware_contract() {
+    fn version_output_writer_uses_gcode_release_identity() {
         xai_grok_version::set_full_version(env!("VERSION_WITH_COMMIT"));
-        for (label, expected_suffix) in [
-            (" [alpha]", " [alpha]\n"),
-            (" [stable]", " [stable]\n"),
-            ("", ")\n"),
-        ] {
-            let mut output = Vec::new();
-            write_version(&mut output, label).unwrap();
-            let output = String::from_utf8(output).unwrap();
-            assert!(output.starts_with("grok "));
-            assert!(output.contains(env!("VERSION_WITH_COMMIT")));
-            assert!(output.ends_with(expected_suffix), "{output:?}");
-        }
+        let mut output = Vec::new();
+        write_version(&mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.starts_with("gcode "));
+        assert!(output.contains(env!("VERSION_WITH_COMMIT")));
+        assert!(output.ends_with(")\n"), "{output:?}");
+        assert!(!output.contains("[stable]"));
+        assert!(!output.contains("[alpha]"));
     }
     #[test]
     fn version_flags_and_doctor_are_distinct_early_intents() {
