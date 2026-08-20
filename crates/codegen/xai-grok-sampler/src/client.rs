@@ -2592,8 +2592,11 @@ mod tests {
             ..minimal_config()
         };
         let client = SamplingClient::new(cfg).expect("client");
+        // `post()` hands back a `SentRequest` (builder + captured credential
+        // fragment), so the builder has to be unwrapped before building.
         let request = client
             .post("https://chatgpt.com/backend-api/codex/responses")
+            .builder
             .build()
             .expect("request");
 
