@@ -1,0 +1,79 @@
+name: Verify login method list
+
+# Pins the `/login` method list built by `build_auth_methods()`.
+# The gcode-owned ChatGPT login was unreachable for months because the only
+# test that produced it fed an input combination a real config cannot produce
+# (an openai-codex model counts as BYOK by itself). These tests run the
+# realistic combinations instead, so a regression shows up in CI rather than
+# as a missing menu entry.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  auth-methods:
+    name: Unit tests (login method list)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Rust toolchain version
+        id: rust-toolchain
+        run: |
+          CHANNEL=$(grep '^channel' rust-toolchain.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "auth-methods-v1"
+          key: xai-grok-shell-lib
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
+
+      - name: Run login-method unit tests
+        run: |
+          set -euo pipefail
+          cargo test -p xai-grok-shell --lib 'agent::auth_method::' -- --nocapture \
+            | tee auth-methods.log
+          # libtest exits 0 when a filter matches nothing, so a renamed module
+          # would turn this job green while testing zero contracts.
+          if grep -qE '^running 0 tests' auth-methods.log; then
+            echo "::error::the agent::auth_method filter matched zero tests"
+            exit 1
+          fi
+
+      - name: Assert the login-method contracts still exist by name
+        run: |
+          set -euo pipefail
+          # Guard against a rename making the cargo filter above pass vacuously.
+          PATTERN='fn (openai_codex_provider_selects_gcode_owned_login|byok_wins_over_unrelated_openai_codex_catalog_entry|openai_codex_never_takes_the_first_slot_from_byok|pinned_methods_do_not_gain_openai_codex)'
+          FILE=crates/codegen/xai-grok-shell/src/agent/auth_method.rs
+          matches=$(grep -nE "$PATTERN" "$FILE" || true)
+          echo "$matches"
+          count=$(printf '%s\n' "$matches" | grep -c . || true)
+          echo "Matched test definitions: $count"
+          test "$count" -ge 4
