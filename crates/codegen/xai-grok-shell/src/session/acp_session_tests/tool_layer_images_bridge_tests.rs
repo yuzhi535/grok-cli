@@ -6,6 +6,9 @@ use xai_grok_tools::types::output::{MCPOutput, ToolOutput, ToolRunResult};
 use xai_grok_tools::util::base64_images::{ExtractedImage, IMAGE_CONTENT_PLACEHOLDER};
 /// 32×32 solid PNG — above vision min side/area so normalize keeps it.
 fn vision_ok_png_b64() -> String {
+    // `Engine::encode` is a trait method; without this import the whole lib
+    // test target fails to compile, which takes every unrelated test with it.
+    use base64::Engine as _;
     use image::{ImageBuffer, Rgba};
     let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
         ImageBuffer::from_pixel(32, 32, Rgba([128, 64, 32, 255]));

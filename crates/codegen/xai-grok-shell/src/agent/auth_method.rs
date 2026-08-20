@@ -150,6 +150,10 @@ pub struct BuiltAuthMethods {
 ///    - `oidc`          (if `has_enterprise_oidc`)
 ///    - `grok.com`      (otherwise)
 ///
+/// 4. `openai-codex`   (appended last if `has_openai_codex_provider`; a manual
+///    `/login` choice only -- it never becomes first and never becomes the
+///    default)
+///
 /// Unpinned `default_auth_method_id`:
 /// - `cached_token` if `has_cached_token`
 /// - `xai.api_key`  else if `has_external_api_key`
@@ -183,7 +187,7 @@ pub fn build_auth_methods(inputs: AuthMethodsBuildInputs<'_>) -> BuiltAuthMethod
         };
     }
 
-    match preferred_method {
+    let mut built = match preferred_method {
         Some(PreferredAuthMethod::ApiKey) => build_pinned_api_key(has_external_api_key),
         Some(PreferredAuthMethod::Oidc) => build_pinned_oidc(
             has_cached_token,
@@ -200,7 +204,33 @@ pub fn build_auth_methods(inputs: AuthMethodsBuildInputs<'_>) -> BuiltAuthMethod
             login_label,
             has_auth_provider_command,
         ),
+    };
+
+    // The exclusive branch above is unreachable for a real config:
+    // `ModelEntry::has_own_credentials()` counts a named auth provider as BYOK,
+    // so the very `[model.*]` entry that sets `has_openai_codex_provider` also
+    // forces `has_external_api_key` true. Without this append, `/login` never
+    // offers the gcode-owned ChatGPT flow to anyone who has an openai-codex
+    // model configured -- exactly the population that needs it.
+    //
+    // APPEND, NEVER PREPEND: the pager's `startup_auth_metadata()` reads
+    // `methods.first()` to decide whether to force the login screen at startup,
+    // and `default_auth_method_id` must keep pointing at the credential that
+    // already works. This adds a manual choice; it changes no default.
+    //
+    // Pinned builds are left alone: `preferred_method` is fail-closed by
+    // contract (only that method family may appear).
+    if has_openai_codex_provider
+        && preferred_method.is_none()
+        && !built
+            .methods
+            .iter()
+            .any(|m| m.id().0.as_ref() == OPENAI_CODEX_METHOD_ID)
+    {
+        built.methods.push(openai_codex_auth_method());
     }
+
+    built
 }
 
 fn build_pinned_api_key(has_external_api_key: bool) -> BuiltAuthMethods {
@@ -809,6 +839,12 @@ mod tests {
         assert_eq!(built.methods[0].name(), "ChatGPT (gcode)");
     }
 
+    /// BYOK still wins the DEFAULT, but the ChatGPT method must remain
+    /// reachable as a manual `/login` choice. This input combination is the
+    /// realistic one, not an edge case: a configured openai-codex model counts
+    /// as BYOK by itself (`ModelEntry::has_own_credentials()` returns true for
+    /// a named auth provider), so `has_external_api_key` is true whenever
+    /// `has_openai_codex_provider` is.
     #[test]
     fn byok_wins_over_unrelated_openai_codex_catalog_entry() {
         let built = build_auth_methods(AuthMethodsBuildInputs {
@@ -818,9 +854,52 @@ mod tests {
         });
         assert_eq!(
             method_ids(&built),
-            vec![XAI_API_KEY_METHOD_ID, GROK_COM_METHOD_ID]
+            vec![
+                XAI_API_KEY_METHOD_ID,
+                GROK_COM_METHOD_ID,
+                OPENAI_CODEX_METHOD_ID,
+            ],
         );
         assert_eq!(default_id(&built), Some(XAI_API_KEY_METHOD_ID));
+    }
+
+    /// The ChatGPT method is appended, never promoted: `startup_auth_metadata()`
+    /// keys off `methods.first()`, so a login-screen regression would show up
+    /// here first.
+    #[test]
+    fn openai_codex_never_takes_the_first_slot_from_byok() {
+        let built = build_auth_methods(AuthMethodsBuildInputs {
+            has_external_api_key: true,
+            has_cached_token: true,
+            has_openai_codex_provider: true,
+            ..default_inputs()
+        });
+        assert_ne!(
+            method_ids(&built).first().copied(),
+            Some(OPENAI_CODEX_METHOD_ID),
+        );
+        assert!(method_ids(&built).contains(&OPENAI_CODEX_METHOD_ID));
+        assert_ne!(default_id(&built), Some(OPENAI_CODEX_METHOD_ID));
+    }
+
+    /// `preferred_method` is fail-closed: a pin admits only its own method
+    /// family, so the append must not smuggle ChatGPT past it.
+    #[test]
+    fn pinned_methods_do_not_gain_openai_codex() {
+        for pin in [PreferredAuthMethod::ApiKey, PreferredAuthMethod::Oidc] {
+            let built = build_auth_methods(AuthMethodsBuildInputs {
+                has_external_api_key: true,
+                has_cached_token: true,
+                has_openai_codex_provider: true,
+                preferred_method: Some(pin),
+                ..default_inputs()
+            });
+            assert!(
+                !method_ids(&built).contains(&OPENAI_CODEX_METHOD_ID),
+                "pinned build leaked the openai-codex method: {:?}",
+                method_ids(&built),
+            );
+        }
     }
 
     // ── End-to-end: enterprise TOML -> resolved models -> build_auth_methods ─
