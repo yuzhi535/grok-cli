@@ -10,7 +10,12 @@ remote_fetch = false
 
 [models]
 default = "catpaw-gpt-5.6-sol"
-allowed_models = ["catpaw-*"]
+# CatPaw models plus ChatGPT-subscription models. The openai-codex patterns
+# admit only models that mint their bearer through the gcode-owned ChatGPT
+# login (`[auth_provider.openai-codex]`); no key is stored here either. Both
+# spellings are listed: `openai-codex-*` is what config/openai-codex.toml
+# ships, `pi-openai-codex-*` is what a PI config import produces.
+allowed_models = ["catpaw-*", "openai-codex-*", "pi-openai-codex-*"]
 
 [model."catpaw-gpt-5.6-sol"]
 model = "catpaw-gpt-5.6-sol"
