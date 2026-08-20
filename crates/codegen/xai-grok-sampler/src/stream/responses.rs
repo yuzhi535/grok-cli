@@ -164,6 +164,19 @@ pub(crate) fn stream_responses_tracked<'a>(
         let mut output_to_tool_index: BTreeMap<u32, u32> = BTreeMap::new();
         let mut next_tool_index: u32 = 0;
 
+        // Every output item seen on `response.output_item.done`, keyed by
+        // `output_index` so wire order is preserved and a re-emitted item
+        // overwrites instead of duplicating.
+        //
+        // ChatGPT's Codex endpoint (`chatgpt.com/backend-api/codex/responses`)
+        // terminates with `response.completed` carrying `output: []` -- the
+        // items only ever arrive on `response.output_item.done`. Reading the
+        // terminal event alone therefore yields a turn with no assistant item,
+        // which `ConversationResponse::empty_reason()` classifies as
+        // `no_visible_content` and the retry layer resamples: the user watches
+        // the same answer stream in and get discarded, over and over.
+        let mut streamed_output_items: BTreeMap<u32, rs::OutputItem> = BTreeMap::new();
+
         let mut stream = raw_stream;
         loop {
             let event_result = match tokio::time::timeout(idle_timeout, stream.next()).await {
@@ -416,6 +429,7 @@ pub(crate) fn stream_responses_tracked<'a>(
                 // For WebSearchCall this includes the query and source URLs.
                 // For CustomToolCall this includes x_search results.
                 ResponseStreamEvent::ResponseOutputItemDone(done_event) => {
+                    streamed_output_items.insert(done_event.output_index, done_event.item.clone());
                     match &done_event.item {
                         rs::OutputItem::WebSearchCall(ws) => {
                             let result = serde_json::to_value(ws).ok();
@@ -512,6 +526,14 @@ pub(crate) fn stream_responses_tracked<'a>(
                 return;
             }
         };
+
+        // Fill in an `output` the backend left empty from the items streamed
+        // on `response.output_item.done`. Fill only, never override: a backend
+        // that does send `output` keeps full authority over the final shape,
+        // so this cannot reorder or drop anything on the xAI / OpenAI paths.
+        if response.output.is_empty() && !streamed_output_items.is_empty() {
+            response.output = streamed_output_items.into_values().collect();
+        }
 
         // Billing fields (`prompt_tokens`, `completion_tokens`,
         // `cached_prompt_tokens`, `reasoning_tokens`) are the cumulative
@@ -1277,6 +1299,115 @@ mod tests {
         match events.last().unwrap() {
             SamplingEvent::Completed { response, .. } => {
                 assert!(response.doom_loop_signals.is_empty());
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    fn assistant_message_done_event(text: &str) -> rs::ResponseStreamEvent {
+        rs::ResponseStreamEvent::ResponseOutputItemDone(rs_types::ResponseOutputItemDoneEvent {
+            sequence_number: 1,
+            output_index: 0,
+            item: rs_types::OutputItem::Message(rs_types::OutputMessage {
+                content: vec![rs_types::OutputMessageContent::OutputText(
+                    rs_types::OutputTextContent {
+                        annotations: vec![],
+                        logprobs: None,
+                        text: text.into(),
+                    },
+                )],
+                id: "msg-1".into(),
+                role: rs_types::AssistantRole::Assistant,
+                status: rs_types::OutputStatus::Completed,
+            }),
+        })
+    }
+
+    /// REGRESSION: ChatGPT's Codex endpoint ends the stream with
+    /// `response.completed` carrying `output: []`, so a turn assembled from the
+    /// terminal event alone has no assistant item. `empty_reason()` then reports
+    /// `no_visible_content` and the retry layer resamples -- the user sees the
+    /// same answer stream in and get thrown away, repeatedly. The items streamed
+    /// on `response.output_item.done` must fill the gap.
+    #[tokio::test]
+    async fn empty_terminal_output_is_recovered_from_streamed_items() {
+        let raw = stream::iter(vec![
+            Ok(text_delta_event("ok")),
+            Ok(assistant_message_done_event("ok")),
+            Ok(completed_event()),
+        ])
+        .boxed();
+        let events = collect(stream_responses(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            None,
+        ))
+        .await;
+
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                assert_eq!(
+                    response.empty_reason(),
+                    None,
+                    "recovered turn must not read as empty, or the retry layer resamples it",
+                );
+                let assistant = response.assistant().expect("assistant item");
+                assert_eq!(
+                    assistant.content.as_ref(),
+                    "ok",
+                    "assistant content lost the streamed text",
+                );
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    /// The repair only fills an empty `output`; a backend that sends its own
+    /// keeps full authority, so nothing on the xAI / OpenAI paths reorders.
+    #[tokio::test]
+    async fn populated_terminal_output_wins_over_streamed_items() {
+        let mut completed = empty_completed_response();
+        completed.output = vec![rs_types::OutputItem::Message(rs_types::OutputMessage {
+            content: vec![rs_types::OutputMessageContent::OutputText(
+                rs_types::OutputTextContent {
+                    annotations: vec![],
+                    logprobs: None,
+                    text: "from terminal".into(),
+                },
+            )],
+            id: "msg-terminal".into(),
+            role: rs_types::AssistantRole::Assistant,
+            status: rs_types::OutputStatus::Completed,
+        })];
+        let terminal = rs::ResponseStreamEvent::ResponseCompleted(rs_types::ResponseCompletedEvent {
+            response: completed,
+            sequence_number: 2,
+        });
+
+        let raw = stream::iter(vec![
+            Ok(assistant_message_done_event("from streamed item")),
+            Ok(terminal),
+        ])
+        .boxed();
+        let events = collect(stream_responses(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            None,
+        ))
+        .await;
+
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                let assistant = response.assistant().expect("assistant item");
+                assert_eq!(
+                    assistant.content.as_ref(),
+                    "from terminal",
+                    "a populated terminal output must win over streamed items",
+                );
             }
             other => panic!("expected Completed, got {other:?}"),
         }

@@ -1,0 +1,78 @@
+name: Verify responses stream assembly
+
+# ChatGPT's Codex endpoint ends a stream with `response.completed` carrying an
+# empty `output`; the items arrive only on `response.output_item.done`. Reading
+# the terminal event alone produced a turn with no assistant item, which the
+# retry layer classified as `no_visible_content` and resampled -- the same
+# answer streamed in and was discarded, over and over. These tests pin the
+# recovery and the rule that a populated terminal `output` still wins.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  responses-stream:
+    name: Unit tests (responses stream assembly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Rust toolchain version
+        id: rust-toolchain
+        run: |
+          CHANNEL=$(grep '^channel' rust-toolchain.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "responses-stream-v1"
+          key: xai-grok-sampler-lib
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
+
+      - name: Run responses-stream unit tests
+        run: |
+          set -euo pipefail
+          cargo test -p xai-grok-sampler --lib 'stream::responses::' -- --nocapture \
+            | tee responses-stream.log
+          # libtest exits 0 when a filter matches nothing, so a renamed module
+          # would turn this job green while testing zero contracts.
+          if grep -qE '^running 0 tests' responses-stream.log; then
+            echo "::error::the stream::responses filter matched zero tests"
+            exit 1
+          fi
+
+      - name: Assert the recovery contracts still exist by name
+        run: |
+          set -euo pipefail
+          PATTERN='fn (empty_terminal_output_is_recovered_from_streamed_items|populated_terminal_output_wins_over_streamed_items)'
+          FILE=crates/codegen/xai-grok-sampler/src/stream/responses.rs
+          matches=$(grep -nE "$PATTERN" "$FILE" || true)
+          echo "$matches"
+          count=$(printf '%s\n' "$matches" | grep -c . || true)
+          echo "Matched test definitions: $count"
+          test "$count" -ge 2
