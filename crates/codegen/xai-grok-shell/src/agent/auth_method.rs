@@ -176,10 +176,10 @@ pub fn build_auth_methods(inputs: AuthMethodsBuildInputs<'_>) -> BuiltAuthMethod
     } = inputs;
 
     // A provider-backed model elsewhere in the merged catalog must not erase
-    // a usable per-model BYOK credential. This matters for managed launchers:
-    // their CatPaw model uses env_key while the user's config may also contain
-    // dormant OpenAI Codex models. With BYOK available, install xai.api_key so
-    // session creation can proceed without an unrelated interactive login.
+    // a usable per-model BYOK credential. A config may contain dormant OpenAI
+    // Codex models while another model uses env_key. With BYOK available,
+    // install xai.api_key so session creation can proceed without an unrelated
+    // interactive login.
     if has_openai_codex_provider && !has_external_api_key {
         return BuiltAuthMethods {
             methods: vec![openai_codex_auth_method()],
