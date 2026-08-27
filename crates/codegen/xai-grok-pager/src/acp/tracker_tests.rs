@@ -1452,6 +1452,109 @@ fn edit_manual_expand_survives_completion() {
         "completion must not snap a user-expanded Edit back to Collapsed"
     );
 }
+/// A mid-run expand of an agent Execute must survive stdout progress
+/// (`replace_tool_block` then `set_execute_output`) and completion
+/// (`replace_tool_block` then `finish_running`). No pin /
+/// `respect_manual_folds` required — same-kind preserve, not the
+/// fold-pin system. Kind upgrade Other→Execute still adopts Collapsed.
+#[test]
+fn execute_manual_expand_survives_progress_and_completion() {
+    use crate::scrollback::types::DisplayMode;
+    let mut tracker = AcpUpdateTracker::new();
+    let mut sb = ScrollbackState::new();
+    let tc_id = "toolu_exec_gesture";
+    tracker.handle_update(
+        tool_call(tc_id, acp::ToolKind::Other, "pending"),
+        &meta(),
+        &mut sb,
+    );
+    assert!(
+        matches!(
+            &sb.get(0).unwrap().block,
+            RenderBlock::ToolCall(ToolCallBlock::Other(_))
+        ),
+        "eager pending should land as Other"
+    );
+    sb.get_by_id_mut(sb.get(0).unwrap().id)
+        .unwrap()
+        .set_display_mode(DisplayMode::Expanded);
+    let refine = acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+        acp::ToolCallId::new(Arc::from(tc_id)),
+        acp::ToolCallUpdateFields::new()
+            .kind(Some(acp::ToolKind::Execute))
+            .title(Some("Execute `cargo build`".to_string()))
+            .raw_input(Some(serde_json::json!({ "command": "cargo build" }))),
+    ));
+    tracker.handle_update(refine, &meta(), &mut sb);
+    let entry = sb.get(0).expect("entry exists");
+    assert!(
+        matches!(
+            &entry.block,
+            RenderBlock::ToolCall(ToolCallBlock::Execute(_))
+        ),
+        "Other→Execute must upgrade the block kind"
+    );
+    assert_eq!(
+        entry.display_mode,
+        DisplayMode::Collapsed,
+        "Other→Execute must reset even if the placeholder was expanded"
+    );
+    tracker.handle_update(
+        tool_update_in_progress(tc_id, b"Compiling\n"),
+        &meta(),
+        &mut sb,
+    );
+    assert_eq!(
+        sb.get(0).unwrap().display_mode,
+        DisplayMode::Collapsed,
+        "progress must not auto-open a collapsed Execute"
+    );
+    sb.get_by_id_mut(sb.get(0).unwrap().id)
+        .unwrap()
+        .set_display_mode(DisplayMode::Expanded);
+    assert!(
+        !sb.get(0).unwrap().display_mode_pinned,
+        "→ expand without respect_manual_folds must not pin"
+    );
+    tracker.handle_update(
+        tool_update_in_progress(tc_id, b"Compiling\n"),
+        &meta(),
+        &mut sb,
+    );
+    assert_eq!(
+        sb.get(0).unwrap().display_mode,
+        DisplayMode::Expanded,
+        "progress must not snap a user-expanded Execute shut"
+    );
+    match &sb.get(0).unwrap().block {
+        RenderBlock::ToolCall(ToolCallBlock::Execute(exec)) => {
+            assert_eq!(exec.output.as_deref(), Some("Compiling\n"));
+        }
+        other => panic!("Expected Execute after progress, got {other:?}"),
+    }
+    tracker.handle_update(
+        tool_update_in_progress(tc_id, b"Compiling\nFinished\n"),
+        &meta(),
+        &mut sb,
+    );
+    assert_eq!(
+        sb.get(0).unwrap().display_mode,
+        DisplayMode::Expanded,
+        "later progress ticks must keep the expand"
+    );
+    tracker.handle_update(
+        tool_update_completed_bash(tc_id, b"Compiling\nFinished\n", 0),
+        &meta(),
+        &mut sb,
+    );
+    let entry = sb.get(0).unwrap();
+    assert!(!entry.is_running);
+    assert_eq!(
+        entry.display_mode,
+        DisplayMode::Expanded,
+        "completion must not snap a user-expanded Execute shut"
+    );
+}
 /// Multi-file (apply_patch shape: several Diff items) and title-fallback
 /// Edits can't be summarized by the one-liner: they materialize Expanded
 /// with the summary marked untrusted, config-independent. Each case
@@ -3907,6 +4010,35 @@ fn handle_user_message_finishes_pending_tool_entries() {
     assert!(
         !sb.needs_animation(),
         "no entries should be animating after user message",
+    );
+}
+/// A send-now interrupt must not finalize the freshly armed page-flip pin.
+#[test]
+fn handle_user_message_does_not_finalize_fresh_pin() {
+    let mut sb = ScrollbackState::new();
+    let mut tracker = AcpUpdateTracker::new();
+    for i in 0..30 {
+        sb.push_block(RenderBlock::agent_message(format!("history {i}")));
+    }
+    sb.push_block(RenderBlock::user_prompt("new question"));
+    let prompt_idx = sb.len() - 1;
+    sb.prepare_layout(80, 8);
+    sb.follow_new_turn(Some(prompt_idx), true);
+    sb.prepare_layout(80, 8);
+    assert!(sb.is_pin_reserve_active(), "pin armed for the new turn");
+    assert!(
+        !sb.is_pin_reserve_after_turn(),
+        "fresh pin is not finalized"
+    );
+    tracker.handle_update(agent_chunk("responding..."), &meta(), &mut sb);
+    tracker.handle_update(user_message("interrupt"), &meta(), &mut sb);
+    assert!(
+        sb.is_pin_reserve_active(),
+        "the interrupt must not drop the pin"
+    );
+    assert!(
+        !sb.is_pin_reserve_after_turn(),
+        "a send-now must not finalize the fresh pin (that blocks the overflow chase)"
     );
 }
 /// Regression: finish_turn must call finish_running even for tools that are
